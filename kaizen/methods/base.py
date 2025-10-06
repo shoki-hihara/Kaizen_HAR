@@ -192,7 +192,7 @@ class BaseModel(pl.LightningModule):
         # remove fc layer
         self.encoder.fc = nn.Identity()
         if cifar:
-            self.encoder.conv1 = nn.Conv1d(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1)
+            self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
             self.encoder.maxpool = nn.Identity()
 
         # self.online_eval_classifier = nn.Linear(self.features_dim, num_classes)
@@ -405,7 +405,8 @@ class BaseModel(pl.LightningModule):
         Returns:
             torch.Tensor: features extracted by the encoder.
         """
-        x = x.permute(0, 2, 1)
+        if X.ndim == 3 and X.shape[1] != 3:
+            X = X.permute(0, 2, 1)  # (B, C, T)
         feats = self.encoder(X)
         return {"feats": feats}
 
