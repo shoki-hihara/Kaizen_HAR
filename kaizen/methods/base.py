@@ -174,14 +174,21 @@ class BaseModel(pl.LightningModule):
             self.min_lr = self.min_lr * self.accumulate_grad_batches
             self.warmup_start_lr = self.warmup_start_lr * self.accumulate_grad_batches
 
-        assert encoder in ["resnet18", "resnet50"]
-        from torchvision.models import resnet18, resnet50
+        # assert encoder in ["resnet18", "resnet50"]
+        # from torchvision.models import resnet18, resnet50
 
-        self.base_model = {"resnet18": resnet18, "resnet50": resnet50}[encoder]
+        # self.base_model = {"resnet18": resnet18, "resnet50": resnet50}[encoder]
 
-        # initialize encoder
-        self.encoder = self.base_model(zero_init_residual=zero_init_residual)
-        self.features_dim = self.encoder.inplanes
+        # # initialize encoder
+        # self.encoder = self.base_model(zero_init_residual=zero_init_residual)
+        # self.features_dim = self.encoder.inplanes
+
+        # バックボーンモデルをTPNに変更
+        from kaizen.models.tpn import TPN
+        assert encoder in ["tpn"]
+        self.encoder = TPN(in_channels=3, num_classes=num_classes, feature_dim=128)
+        self.features_dim = self.encoder.feature_dim
+
         # remove fc layer
         self.encoder.fc = nn.Identity()
         if cifar:
@@ -213,7 +220,8 @@ class BaseModel(pl.LightningModule):
         parser = parent_parser.add_argument_group("base")
 
         # encoder args
-        SUPPORTED_NETWORKS = ["resnet18", "resnet50"]
+        # TPNを追加
+        SUPPORTED_NETWORKS = ["resnet18", "resnet50", "tpn"]
 
         parser.add_argument("--encoder", choices=SUPPORTED_NETWORKS, type=str)
         parser.add_argument("--zero_init_residual", action="store_true")
