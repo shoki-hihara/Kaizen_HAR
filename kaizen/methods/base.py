@@ -186,8 +186,8 @@ class BaseModel(pl.LightningModule):
         # バックボーンモデルをTPNに変更
         from kaizen.methods.tpn import TPN
         assert encoder in ["tpn"]
-        self.encoder = TPN(in_channels=3, num_classes=num_classes, feature_dim=128)
-        self.features_dim = self.encoder.output_dim
+        self.encoder = TPN(in_channels=3, feature_dim=128)
+        self.features_dim = self.encoder.features_dim
 
         # remove fc layer
         self.encoder.fc = nn.Identity()
