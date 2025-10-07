@@ -9,7 +9,7 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 
-from my_har_dataloader import load_wisdm_dataset, get_dataloader
+from kaizen.methods.dataloader import load_wisdm_dataset, get_dataloader
 from tpn_model import TPN
 from linear_tpn_model import LinearTPNModel
 
