@@ -18,10 +18,12 @@ except ImportError:
     _dali_avaliable = False
 else:
     _dali_avaliable = True
-from kaizen.methods.linear import LinearModel
+# from kaizen.methods.linear import LinearModel
 from kaizen.methods.multi_layer_classifier import MultiLayerClassifier
 from kaizen.utils.classification_dataloader import prepare_data
 from kaizen.utils.checkpointer import Checkpointer
+from kaizen.methods.tpn import TPN
+
 
 
 def main():
@@ -37,16 +39,27 @@ def main():
     seed_everything(args.global_seed)
 
 
-    # Build backbone
-    if args.encoder == "resnet18":
-        backbone = resnet18()
-    elif args.encoder == "resnet50":
-        backbone = resnet50()
+    # # Build backbone
+    # if args.encoder == "resnet18":
+    #     backbone = resnet18()
+    # elif args.encoder == "resnet50":
+    #     backbone = resnet50()
+    # else:
+    #     raise ValueError("Only [resnet18, resnet50] are currently supported.")
+
+    # if args.cifar:
+    #     backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=2, bias=False)
+    #     backbone.maxpool = nn.Identity()
+    # backbone.fc = nn.Identity()
+
+    # バックボーンをTPNに変更
+    if args.encoder == "tpn":
+        backbone = TPN()
     else:
-        raise ValueError("Only [resnet18, resnet50] are currently supported.")
+        raise ValueError("Only [tpn] are currently supported.")
 
     if args.cifar:
-        backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=2, bias=False)
+        backbone.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
         backbone.maxpool = nn.Identity()
     backbone.fc = nn.Identity()
 
