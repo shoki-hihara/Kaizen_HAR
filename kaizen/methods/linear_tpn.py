@@ -100,7 +100,12 @@ class LinearTPNModel(pl.LightningModule):
         elif scheduler_name == "cosine":
             scheduler = CosineAnnealingLR(optimizer, max_epochs)
         elif scheduler_name == "reduce":
-            scheduler = ReduceLROnPlateau(optimizer)
+                scheduler = {
+                                "scheduler": ReduceLROnPlateau(optimizer, mode="min"),
+                                "monitor": "val_loss", 
+                                "interval": "epoch",
+                                "frequency": 1
+                            }
         elif scheduler_name == "step":
             scheduler = MultiStepLR(optimizer, lr_decay_steps, gamma=0.1)
         elif scheduler_name == "exponential":
