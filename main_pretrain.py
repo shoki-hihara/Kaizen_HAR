@@ -108,7 +108,7 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
-    print(f"[DEBUG] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders]}")
+    print(f"[DEBUG] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders.values()]}")
 
     # モデル構築
     feature_dim = getattr(args, "feature_dim", 128)
