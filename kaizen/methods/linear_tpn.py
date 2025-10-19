@@ -79,29 +79,36 @@ class LinearTPNModel(pl.LightningModule):
         optimizer_name = self.hparams.get("optimizer", "sgd")
         lr = self.hparams.get("lr", 0.1)
         weight_decay = self.hparams.get("weight_decay", 1e-4)
-        extra_optimizer_args = self.hparams
-
+    
         if optimizer_name == "sgd":
             optimizer_cls = torch.optim.SGD
         elif optimizer_name == "adam":
             optimizer_cls = torch.optim.Adam
         else:
             raise ValueError(f"{optimizer_name} not in (sgd, adam)")
-
+    
+        # hparams の中から lr と weight_decay は除外して渡す
+        extra_optimizer_args = {
+            k: v for k, v in self.hparams.items() if k not in ["lr", "weight_decay", "optimizer"]
+        }
+    
         optimizer = optimizer_cls(
             self.classifier.parameters(),
             lr=lr,
             weight_decay=weight_decay,
             **extra_optimizer_args,
         )
-
+    
         if self.hparams.get("lars", False):
-            optimizer = LARSWrapper(optimizer, exclude_bias_n_norm=self.hparams.get("exclude_bias_n_norm", False))
-
+            optimizer = LARSWrapper(
+                optimizer,
+                exclude_bias_n_norm=self.hparams.get("exclude_bias_n_norm", False),
+            )
+    
         scheduler_name = self.hparams.get("scheduler", "reduce")
         max_epochs = self.hparams.get("max_epochs", 100)
         lr_decay_steps = self.hparams.get("lr_decay_steps", None)
-
+    
         if scheduler_name == "none":
             return optimizer
         elif scheduler_name == "warmup_cosine":
@@ -109,19 +116,19 @@ class LinearTPNModel(pl.LightningModule):
         elif scheduler_name == "cosine":
             scheduler = CosineAnnealingLR(optimizer, max_epochs)
         elif scheduler_name == "reduce":
-                scheduler = {
-                                "scheduler": ReduceLROnPlateau(optimizer, mode="min"),
-                                "monitor": "val_loss", 
-                                "interval": "epoch",
-                                "frequency": 1
-                            }
+            scheduler = {
+                "scheduler": ReduceLROnPlateau(optimizer, mode="min"),
+                "monitor": "val_loss",
+                "interval": "epoch",
+                "frequency": 1,
+            }
         elif scheduler_name == "step":
             scheduler = MultiStepLR(optimizer, lr_decay_steps, gamma=0.1)
         elif scheduler_name == "exponential":
             scheduler = ExponentialLR(optimizer, weight_decay)
         else:
             raise ValueError(f"{scheduler_name} not supported")
-
+    
         return [optimizer], [scheduler]
 
     def shared_step(self, batch: Tuple, batch_idx: int):
