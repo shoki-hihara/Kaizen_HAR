@@ -138,15 +138,17 @@ def main():
             filename="last",
             save_last=True,
             save_top_k=1,
-            monitor=None
+            monitor=None,
+            verbose=True   # 保存状況をログに出力
         )
         callbacks.append(checkpoint_callback)
 
-    trainer = Trainer.from_argparse_args(
-        args,
-        logger=wandb_logger if args.wandb else None,
+    trainer = Trainer(
+        max_epochs=args.max_epochs,
+        gpus=args.gpus if args.gpus > 0 else None,
+        precision=args.precision,
         callbacks=callbacks,
-        # terminate_on_nan=True,
+        logger=wandb_logger if args.wandb else None,
     )
 
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
@@ -160,6 +162,9 @@ def main():
         model = LinearTPNModel.load_from_checkpoint(
             last_ckpt_path, backbone=model.backbone, num_classes=len(sum(tasks, []))
         )
+
+    print(f"[DEBUG] Training on {len(train_loaders[f'task{args.task_idx}'].dataset)} samples")
+    print(f"[DEBUG] Checkpoint will be saved to: {args.checkpoint_dir}")
     
     # train_loader を単体で渡す
     trainer.fit(model, train_loaders[f"task{args.task_idx}"], val_dataloaders=None)
