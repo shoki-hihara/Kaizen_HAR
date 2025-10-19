@@ -19,6 +19,8 @@ from kaizen.distillers import DISTILLERS
 from kaizen.distiller_factories import DISTILLER_FACTORIES, base_frozen_model_factory
 from kaizen.utils.checkpointer import Checkpointer
 
+import random
+
 def map_labels_to_tasks():
     """
     HARのタスク分割ラベルマッピング
@@ -74,7 +76,18 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
 
     return train_loaders, test_dataset
 
+def set_seed(seed: int = 5):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True  # 再現性重視
+    torch.backends.cudnn.benchmark = False     # 再現性重視
+
 def main():
+    SEED = 5
+    set_seed(SEED)
+    
     args = parse_args_pretrain()
     seed_everything(args.global_seed)
 
