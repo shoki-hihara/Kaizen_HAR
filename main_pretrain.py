@@ -19,6 +19,7 @@ from kaizen.methods import METHODS
 from kaizen.distillers import DISTILLERS
 from kaizen.distiller_factories import DISTILLER_FACTORIES, base_frozen_model_factory
 from kaizen.utils.checkpointer import Checkpointer
+from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
 
 import random
 
@@ -44,41 +45,31 @@ def map_labels_to_tasks():
 
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
     """
-    HARデータセットのタスク分割、replay, online_eval対応
+    WISDM 用の train/val loader 構築
     """
-    # 全データセット
-    train_dataset = load_wisdm_dataset(data_dir, split="train")
-    test_dataset = load_wisdm_dataset(data_dir, split="test")
+    # データをwindow化してDataLoader作成
+    train_loader, val_loader, label_encoder = prepare_wisdm_dataloaders(
+        csv_path=os.path.join(data_dir, "WISDM_ar_v1.1_raw.txt"),
+        batch_size=batch_size,
+        window_size=384,
+        step_size=384,
+        val_ratio=0.2,
+        num_workers=num_workers
+    )
 
-    # タスクごとのラベル
-    task_labels = tasks[task_idx]
+    train_loaders = {f"task{task_idx}": train_loader}
 
-    # タスクのサブセット
-    task_indices = [i for i, (_, y) in enumerate(train_dataset) if y in task_labels]
-    task_dataset = Subset(train_dataset, task_indices)
-    task_loader = DataLoader(task_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-
-    train_loaders = {f"task{task_idx}": task_loader}
-
-    # replay データ
+    # replayやonline_evalは必要に応じて追加可能
     if replay and task_idx != 0:
-        replay_indices = [i for i, (_, y) in enumerate(train_dataset) if any(y in tasks[t] for t in range(task_idx))]
-        replay_sample_size = max(1, int(len(replay_indices) * replay_proportion))
-        replay_indices = np.random.choice(replay_indices, size=replay_sample_size, replace=False)
-        replay_dataset = Subset(train_dataset, replay_indices)
-        replay_loader = DataLoader(replay_dataset, batch_size=min(batch_size, len(replay_dataset)),
-                                   shuffle=True, num_workers=num_workers)
-        train_loaders.update({"replay": replay_loader})
+        # replayロジック（同じtrain_loaderからサンプル抽出）
+        replay_sample_size = max(1, int(len(train_loader.dataset) * replay_proportion))
+        indices = np.random.choice(len(train_loader.dataset), size=replay_sample_size, replace=False)
+        replay_dataset = torch.utils.data.Subset(train_loader.dataset, indices)
+        replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+        train_loaders["replay"] = replay_loader
 
-    # online_eval データ
-    online_eval_labels = sum(tasks[:task_idx + 1], [])
-    online_eval_indices = [i for i, (_, y) in enumerate(test_dataset) if y in sum(tasks[:task_idx + 1], [])]
-    online_eval_dataset = Subset(test_dataset, online_eval_indices)
-    online_eval_loader = DataLoader(online_eval_dataset, batch_size=len(online_eval_dataset) // len(task_loader),
-                                    shuffle=False, num_workers=num_workers)
-    train_loaders.update({"online_eval": online_eval_loader})
-
-    return train_loaders, test_dataset
+    # val_loader は trainer.fit の val_dataloaders に渡す
+    return train_loaders, val_loader
 
 def set_seed(seed: int = 5):
     random.seed(seed)
@@ -173,8 +164,11 @@ def main():
     print(f"[DEBUG] Training on {len(train_loaders[f'task{args.task_idx}'].dataset)} samples")
     print(f"[DEBUG] Checkpoint will be saved to: {args.checkpoint_dir}")
     
-    # train_loader を単体で渡す
-    trainer.fit(model, train_loaders[f"task{args.task_idx}"], val_dataloaders=None)
+    trainer.fit(
+        model,
+        train_loaders[f"task{args.task_idx}"],
+        val_dataloaders=val_dataset  # 上で返したval_loader
+    )
 
 if __name__ == "__main__":
     main()
