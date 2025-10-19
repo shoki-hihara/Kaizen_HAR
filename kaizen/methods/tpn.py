@@ -17,7 +17,8 @@ class TPN(nn.Module):
     def forward(self, x):
         # WISDM用: Conv1dの入力形式 [batch, channels, seq_len] に変換
         if x.ndim == 3 and x.shape[1] == 384 and x.shape[2] == 3:
-        x = x.transpose(1, 2)  # [batch, seq_len, channels] -> [batch, channels, seq_len]
+            x = x.transpose(1, 2)  # [batch, seq_len, channels] -> [batch, channels, seq_len]
+        
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.pool(x).squeeze(-1)
