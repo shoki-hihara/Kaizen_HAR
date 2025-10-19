@@ -48,16 +48,21 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
     WISDM 用の train/val loader 構築
     """
     # データをwindow化してDataLoader作成
-    train_loader, val_loader, label_encoder = prepare_wisdm_dataloaders(
-        csv_path=os.path.join(data_dir, "WISDM_ar_v1.1_raw.txt"),
-        batch_size=batch_size,
-        window_size=384,
-        step_size=384,
-        val_ratio=0.2,
-        num_workers=num_workers
+    train_loaders, val_dataset = prepare_task_datasets(
+        data_dir=args.data_dir,
+        task_idx=args.task_idx,
+        tasks=tasks,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        replay=args.replay,
+        replay_proportion=args.replay_proportion
     )
-
-    train_loaders = {f"task{task_idx}": train_loader}
+    
+    # 修正版 (train/test npy を使う)
+    train_file = os.path.join(args.data_dir, "train")
+    test_file  = os.path.join(args.data_dir, "test")
+    train_loader, val_loader = prepare_wisdm_dataloaders(train_file, test_file, batch_size=args.batch_size, num_workers=args.num_workers)
+    train_loaders = {f"task{args.task_idx}": train_loader}
 
     # replayやonline_evalは必要に応じて追加可能
     if replay and task_idx != 0:
