@@ -7,61 +7,34 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 import torch
 
-class WISDMDataset(Dataset):
-    def __init__(self, data, labels, transform=None):
-        """
-        Args:
-            data (np.ndarray): shape (num_samples, window_size, 3)
-            labels (np.ndarray): shape (num_samples,)
-            transform (callable, optional): optional transform to be applied
-                on a sample
-        """
-        self.data = data.astype(np.float32)
-        self.labels = labels.astype(np.int64)
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        x = self.data[idx]
-        y = self.labels[idx]
-        if self.transform:
-            x = self.transform(x)
-        return x, y
-
-def load_wisdm_csv(file_path):
+def prepare_wisdm_dataloaders(train_file, test_file, batch_size=64, num_workers=2):
     """
-    Load WISDM CSV and return numpy arrays
+    WISDM2019 の npy 前処理済みデータを読み込み DataLoader を返す
+    Args:
+        train_file (str): train ファイルのパス (例: "/content/drive/.../train")
+        test_file  (str): test ファイルのパス
+        batch_size (int)
+        num_workers (int)
+    Returns:
+        train_loader, val_loader
     """
-    df = pd.read_csv(file_path)
-    # Assume columns: user, activity, timestamp, x, y, z
-    le = LabelEncoder()
-    df['activity'] = le.fit_transform(df['activity'])
-    return df, le
+    # npy の読み込み
+    X_train = np.load(train_file + "_X.npy")  # shape: (num_samples, window_size, 3)
+    y_train = np.load(train_file + "_y.npy")  # shape: (num_samples,)
+    X_test  = np.load(test_file  + "_X.npy")
+    y_test  = np.load(test_file  + "_y.npy")
 
-def window_data(df, window_size=384, step_size=384):
-    """
-    Slice data into windows
-    """
-    X = []
-    y = []
+    # TensorDataset に変換
+    train_dataset = TensorDataset(torch.from_numpy(X_train).float(),
+                                  torch.from_numpy(y_train).long())
+    val_dataset   = TensorDataset(torch.from_numpy(X_test).float(),
+                                  torch.from_numpy(y_test).long())
 
-    for user_id in df['user'].unique():
-        user_data = df[df['user'] == user_id]
-        activities = user_data['activity'].values
-        sensor_values = user_data[['x','y','z']].values
+    # DataLoader
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-        start = 0
-        while start + window_size <= len(sensor_values):
-            X.append(sensor_values[start:start+window_size])
-            # Label: most frequent activity in window
-            label_window = activities[start:start+window_size]
-            counts = np.bincount(label_window)
-            y.append(np.argmax(counts))
-            start += step_size
-
-    return np.array(X), np.array(y)
+    return train_loader, val_loader
 
 def prepare_wisdm_dataloaders(train_file, test_file, batch_size=64, num_workers=2):
     import torch
