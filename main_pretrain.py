@@ -125,7 +125,13 @@ def main():
     # -----------------------------
     # GPU 判定
     # -----------------------------
-    accelerator = "gpu" if torch.cuda.is_available() and int(args.gpus) > 0 else "cpu"
+    if isinstance(args.gpus, list):
+        gpu_list = [int(g) for g in args.gpus]
+        gpu_arg = gpu_list[0] if len(gpu_list) > 0 else 0
+    else:
+        gpu_arg = int(args.gpus)
+    
+    accelerator = "gpu" if torch.cuda.is_available() and gpu_arg > 0 else "cpu"
     devices = 1 if accelerator == "gpu" else None
     precision = args.precision if accelerator == "gpu" else 32
 
