@@ -32,8 +32,9 @@ class LinearTPNModel(pl.LightningModule):
 
         self.backbone = backbone
         with torch.no_grad():
-            dummy = torch.randn(1, 3, 384)  # 入力形状に合わせる
-            output_dim = backbone(dummy).shape[-1]
+            # WISDM2019: batch=1, channels=3, seq_len=384
+            dummy = torch.randn(1, 3, 384)
+            output_dim = backbone(dummy).shape[1]  # チャンネル方向の次元を取得
         self.classifier = nn.Linear(output_dim, num_classes)
 
         # freeze_backbone を kwargs から取得
