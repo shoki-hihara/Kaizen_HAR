@@ -1,4 +1,3 @@
-# main_pretrain.py 完全修正版
 import os
 import random
 import numpy as np
@@ -39,6 +38,7 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
 
     if replay and task_idx != 0:
         replay_sample_size = max(1, int(len(train_loader.dataset) * replay_proportion))
+        replay_sample_size = min(replay_sample_size, len(train_loader.dataset))
         indices = np.random.choice(len(train_loader.dataset), size=replay_sample_size, replace=False)
         replay_dataset = torch.utils.data.Subset(train_loader.dataset, indices)
         replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
@@ -130,8 +130,8 @@ def main():
         gpu_arg = gpu_list[0] if len(gpu_list) > 0 else 0
     else:
         gpu_arg = int(args.gpus)
-    
-    accelerator = "gpu" if torch.cuda.is_available() and gpu_arg > 0 else "cpu"
+
+    accelerator = "gpu" if torch.cuda.is_available() and gpu_arg >= 0 else "cpu"
     devices = 1 if accelerator == "gpu" else None
     precision = args.precision if accelerator == "gpu" else 32
 
@@ -172,8 +172,11 @@ def main():
     # Task 0 checkpoint 保存
     # -----------------------------
     if args.task_idx == 0 and args.save_checkpoint:
-        trainer.save_checkpoint(last_ckpt_path)
-        print(f"[INFO] Checkpoint saved to {last_ckpt_path}")
+        if checkpoint_callback is not None:
+            print(f"[INFO] Checkpoint saved to {last_ckpt_path}")
+        else:
+            trainer.save_checkpoint(last_ckpt_path)
+            print(f"[INFO] Checkpoint saved manually to {last_ckpt_path}")
 
 if __name__ == "__main__":
     main()
