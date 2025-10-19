@@ -31,7 +31,10 @@ class LinearTPNModel(pl.LightningModule):
         super().__init__()
 
         self.backbone = backbone
-        self.classifier = nn.Linear(getattr(backbone, "feature_dim", backbone.out_dim), num_classes)
+        with torch.no_grad():
+            dummy = torch.randn(1, 3, 384)  # 入力形状に合わせる
+            output_dim = backbone(dummy).shape[-1]
+        self.classifier = nn.Linear(output_dim, num_classes)
 
         # freeze_backbone を kwargs から取得
         freeze_backbone = kwargs.get("freeze_backbone", False)
@@ -137,7 +140,7 @@ class LinearTPNModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        batch_size, loss, acc1, acc5, logits = self.shared_step(batch[-2:], batch_idx)
+        batch_size, loss, acc1, acc5, logits = self.shared_step(batch, batch_idx)
         results = {
             "batch_size": batch_size,
             "val_loss": loss,
