@@ -8,7 +8,8 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from kaizen.methods import TPNLightning
+from kaizen.methods.linear_tpn import LinearTPNModel
+from kaizen.methods import TPNLightning  # backbone 用
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
 
@@ -92,9 +93,14 @@ def main():
 
     print(f"[INFO] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders.values()]}")
 
-    # モデル構築（自己教師あり）
-    feature_dim = getattr(args, "feature_dim", 128)
-    model = TPNLightning(in_channels=3, feature_dim=feature_dim)
+    # -----------------------------
+    # モデル構築（HAR用 LinearTPN）
+    # -----------------------------
+    # backbone は既存の TPNLightning を使用
+    backbone = TPNLightning(in_channels=3, feature_dim=getattr(args, "feature_dim", 128))
+
+    # LinearTPNModel で classifier 18クラス対応
+    model = LinearTPNModel(backbone=backbone, num_classes=18, **vars(args))
 
     # Checkpoint 継続読み込み
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
