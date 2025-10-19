@@ -26,13 +26,14 @@ def map_labels_to_tasks():
     HARのタスク分割ラベルマッピング
     """
     task_classes = {
-        0: ["folding_clothes", "climb_stairs", "walking"],
-        1: ["sitting", "drinking", "eating_fries"],
-        2: ["standing", "eating_sandwich", "clapping_hands"],
-        3: ["brushing_teeth", "jogging", "eating_pasta"],
-        4: ["eating_soup", "writing", "typing"],
-        5: ["catching_ball", "kicking_soccer", "dribbling_basketball"],
+        0: [17, 2, 0],    # タスク1　"folding_clothes", "climb_stairs", "walking"
+        1: [3, 10, 4],    # タスク2　"sitting", "drinking", "eating_fries"
+        2: [4, 11, 16],   # タスク3　"standing", "eating_sandwich", "clapping_hands"
+        3: [6, 1, 9],     # タスク4　"brushing_teeth", "jogging", "eating_pasta"
+        4: [7, 15, 5],    # タスク5　"eating_soup", "writing", "typing"
+        5: [13, 12, 14],  # タスク6　"catching_ball", "kicking_soccer", "dribbling_basketball"
     }
+    
     label_to_task = {}
     for task_idx, labels in task_classes.items():
         for label in labels:
