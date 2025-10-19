@@ -3,16 +3,19 @@ import random
 import json
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from kaizen.methods import TPN, LinearTPNModel
+from kaizen.methods import TPN
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
 
 
+# -----------------------------
+# タスクマッピング
+# -----------------------------
 def map_labels_to_tasks():
     task_classes = [
         [17, 2, 0],    # タスク1
@@ -29,6 +32,9 @@ def map_labels_to_tasks():
     return task_classes, label_to_task
 
 
+# -----------------------------
+# データローダ準備（リプレイ含む）
+# -----------------------------
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
     train_loader, val_loader = prepare_wisdm_dataloaders(
         data_dir=data_dir,
@@ -37,20 +43,22 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
         num_workers=num_workers
     )
 
-    train_loaders = {f"task{task_idx}": train_loader}
+    loaders = {f"task{task_idx}": train_loader}
 
     if replay and task_idx != 0:
-        replay_sample_size = max(1, int(len(train_loader.dataset) * replay_proportion))
-        replay_sample_size = min(replay_sample_size, len(train_loader.dataset))
-        indices = np.random.choice(len(train_loader.dataset), size=replay_sample_size, replace=False)
-        replay_dataset = torch.utils.data.Subset(train_loader.dataset, indices)
+        replay_size = max(1, int(len(train_loader.dataset) * replay_proportion))
+        indices = np.random.choice(len(train_loader.dataset), replay_size, replace=False)
+        replay_dataset = Subset(train_loader.dataset, indices)
         replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        train_loaders["replay"] = replay_loader
+        loaders["replay"] = replay_loader
 
-    return train_loaders, val_loader
+    return loaders, val_loader
 
 
-def set_seed(seed: int = 5):
+# -----------------------------
+# 再現性の確保
+# -----------------------------
+def set_seed(seed=5):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -59,24 +67,19 @@ def set_seed(seed: int = 5):
     torch.backends.cudnn.benchmark = False
 
 
+# -----------------------------
+# メイン処理
+# -----------------------------
 def main():
     args = parse_args_pretrain()
-
-    # -----------------------------
-    # Seed 設定
-    # -----------------------------
     SEED = getattr(args, "global_seed", 5)
     set_seed(SEED)
     seed_everything(SEED)
 
-    # -----------------------------
-    # タスクマッピング
-    # -----------------------------
+    # タスク設定
     tasks, label_to_task = map_labels_to_tasks()
 
-    # -----------------------------
-    # データセット準備
-    # -----------------------------
+    # データセット
     train_loaders, val_loader = prepare_task_datasets(
         data_dir=args.data_dir,
         task_idx=args.task_idx,
@@ -87,35 +90,34 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
-    print(f"[DEBUG] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders.values()]}")
+    print(f"[INFO] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders.values()]}")
 
-    # -----------------------------
-    # モデル構築
-    # -----------------------------
+    # モデル構築（自己教師あり）
     feature_dim = getattr(args, "feature_dim", 128)
-    backbone = TPN(in_channels=3, feature_dim=feature_dim)
-    model = LinearTPNModel(backbone=backbone, num_classes=len(sum(tasks, [])))
+    model = TPN(in_channels=3, feature_dim=feature_dim)
 
-    # -----------------------------
-    # WandB ログ
-    # -----------------------------
+    # Checkpoint 継続読み込み
+    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
+    if args.task_idx != 0 and os.path.exists(last_ckpt_path):
+        print(f"[INFO] Loading checkpoint from {last_ckpt_path}")
+        ckpt = torch.load(last_ckpt_path, map_location="cpu")
+        model.load_state_dict(ckpt["state_dict"], strict=False)
+
+    # WandB ロガー
     callbacks = []
     wandb_logger = None
     if args.wandb:
         wandb_logger = WandbLogger(
-            name=f"{args.name}-task{args.task_idx}",
+            name=f"{args.name}_task{args.task_idx}",
             project=args.project,
             entity=args.entity,
             offline=args.offline,
             reinit=True,
         )
-        wandb_logger.watch(model, log="gradients", log_freq=100)
-        wandb_logger.log_hyperparams(args)
+        wandb_logger.watch(model, log="all", log_freq=100)
         callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
-    # -----------------------------
-    # Checkpoint
-    # -----------------------------
+    # Checkpoint コールバック
     checkpoint_callback = None
     if args.save_checkpoint:
         checkpoint_callback = ModelCheckpoint(
@@ -123,78 +125,39 @@ def main():
             filename="last",
             save_last=True,
             save_top_k=1,
-            monitor="val_loss",  # ReduceLROnPlateau 用
+            monitor="train_loss",  # SSLなので val_loss は使わない
             verbose=True
         )
         callbacks.append(checkpoint_callback)
 
-    # -----------------------------
-    # GPU 判定
-    # -----------------------------
-    if isinstance(args.gpus, list):
-        gpu_list = [int(g) for g in args.gpus]
-        gpu_arg = gpu_list[0] if len(gpu_list) > 0 else 0
-    else:
-        gpu_arg = int(args.gpus)
-
-    accelerator = "gpu" if torch.cuda.is_available() and gpu_arg >= 0 else "cpu"
+    # GPU設定
+    accelerator = "gpu" if torch.cuda.is_available() else "cpu"
     devices = 1 if accelerator == "gpu" else None
     precision = args.precision if accelerator == "gpu" else 32
 
-    # -----------------------------
-    # Task 1 以降 checkpoint からロード
-    # -----------------------------
-    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
-    if args.task_idx != 0:
-        if not os.path.exists(last_ckpt_path):
-            raise FileNotFoundError(f"Task 0 checkpoint not found at {last_ckpt_path}")
-        print(f"[INFO] Loading checkpoint from {last_ckpt_path} for Task {args.task_idx}")
-        model = LinearTPNModel.load_from_checkpoint(
-            last_ckpt_path, backbone=model.backbone, num_classes=len(sum(tasks, []))
-        )
-
-    # -----------------------------
-    # Trainer
-    # -----------------------------
-    trainer_kwargs = dict(
+    trainer = Trainer(
         max_epochs=args.max_epochs,
         accelerator=accelerator,
         devices=devices,
         precision=precision,
         callbacks=callbacks,
-        logger=wandb_logger
+        logger=wandb_logger,
     )
 
-    if getattr(args, "scheduler", "").lower() == "reduce_on_plateau":
-        trainer_kwargs["monitor"] = "val_loss"
-
-    trainer = Trainer(**trainer_kwargs)
-
-    # -----------------------------
     # 学習開始
-    # -----------------------------
     trainer.fit(
         model,
-        train_dataloaders=train_loaders[f"task{args.task_idx}"],
-        val_dataloaders=val_loader
+        train_dataloaders=train_loaders[f"task{args.task_idx}"]
     )
 
-    # -----------------------------
-    # Task 0 checkpoint 保存 & last_checkpoint.txt 作成
-    # -----------------------------
-    if args.task_idx == 0 and args.save_checkpoint:
+    # Checkpoint 保存
+    if args.save_checkpoint:
         trainer.save_checkpoint(last_ckpt_path)
-        print(f"[INFO] Checkpoint saved to {last_ckpt_path}")
+        print(f"[INFO] Saved checkpoint to {last_ckpt_path}")
 
-        # last_checkpoint.txt & last_args.json を作成
-        last_checkpoint_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
-        with open(last_checkpoint_txt, "w") as f:
-            f.write(f"{last_ckpt_path}\n")
-        args_json_path = os.path.join(args.checkpoint_dir, "last_args.json")
-        with open(args_json_path, "w") as f:
+        # JSON保存（継続学習用）
+        with open(os.path.join(args.checkpoint_dir, "last_args.json"), "w") as f:
             json.dump(vars(args), f)
-        print(f"[INFO] last_checkpoint.txt created at {last_checkpoint_txt}")
-        print(f"[INFO] last_args.json created at {args_json_path}")
 
 
 if __name__ == "__main__":
