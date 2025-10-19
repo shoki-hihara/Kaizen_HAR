@@ -8,7 +8,7 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
-from kaizen.methods import TPN
+from kaizen.methods import TPNLightning
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
 
@@ -94,7 +94,7 @@ def main():
 
     # モデル構築（自己教師あり）
     feature_dim = getattr(args, "feature_dim", 128)
-    model = TPN(in_channels=3, feature_dim=feature_dim)
+    model = TPNLightning(in_channels=3, feature_dim=feature_dim)
 
     # Checkpoint 継続読み込み
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
