@@ -15,11 +15,14 @@ class TPN(nn.Module):
         self.feature_dim = feature_dim
 
     def forward(self, x):
+        # x: (batch, timesteps, channel) → (batch, channel, timesteps)
+        x = x.transpose(1, 2)
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
         x = self.pool(x).squeeze(-1)
         x = self.fc(x)
         return x
+
 
 
 class TPNLightning(pl.LightningModule):
@@ -30,8 +33,10 @@ class TPNLightning(pl.LightningModule):
         self.classifier = nn.Linear(feature_dim, num_classes)
         self.lr = lr
 
-    def forward(self, x):
+    def forward(self, x, return_features=False):
         z = self.backbone(x)
+        if return_features:
+            return z
         return self.classifier(z)
 
     def training_step(self, batch, batch_idx):
