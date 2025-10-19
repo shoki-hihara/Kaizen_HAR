@@ -145,7 +145,8 @@ def main():
 
     trainer = Trainer(
         max_epochs=args.max_epochs,
-        gpus=args.gpus if args.gpus > 0 else None,
+        accelerator="gpu" if int(args.gpus) > 0 else "cpu",
+        devices=int(args.gpus) if int(args.gpus) > 0 else None,
         precision=args.precision,
         callbacks=callbacks,
         logger=wandb_logger if args.wandb else None,
