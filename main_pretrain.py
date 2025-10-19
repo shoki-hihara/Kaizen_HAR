@@ -146,21 +146,23 @@ def main():
         args,
         logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
-        terminate_on_nan=True,
+        # terminate_on_nan=True,
     )
 
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
     
     # Task 1 以降でのみ checkpoint をロード
+    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
     if args.task_idx != 0:
         if not os.path.exists(last_ckpt_path):
             raise FileNotFoundError(f"Task 0 checkpoint not found at {last_ckpt_path}")
         print(f"[INFO] Loading checkpoint from {last_ckpt_path} for Task {args.task_idx}")
-        model = LinearTPNModel.load_from_checkpoint(last_ckpt_path, backbone=model.backbone, num_classes=len(sum(tasks, [])))
+        model = LinearTPNModel.load_from_checkpoint(
+            last_ckpt_path, backbone=model.backbone, num_classes=len(sum(tasks, []))
+        )
     
-    # fit 呼び出し
-    train_loader_to_use = train_loaders[f"task{args.task_idx}"]
-    trainer.fit(model, train_loader_to_use, val_dataloaders=None)
+    # train_loader を単体で渡す
+    trainer.fit(model, train_loaders[f"task{args.task_idx}"], val_dataloaders=None)
 
 if __name__ == "__main__":
     main()
