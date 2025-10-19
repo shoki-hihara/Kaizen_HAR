@@ -143,10 +143,15 @@ def main():
         )
         callbacks.append(checkpoint_callback)
 
+    if isinstance(args.gpus, list):
+        gpu_arg = int(args.gpus[0])
+    else:
+        gpu_arg = int(args.gpus)
+    
     trainer = Trainer(
         max_epochs=args.max_epochs,
-        accelerator="gpu" if int(args.gpus) > 0 else "cpu",
-        devices=int(args.gpus) if int(args.gpus) > 0 else None,
+        accelerator="gpu" if gpu_arg > 0 else "cpu",
+        devices=gpu_arg if gpu_arg > 0 else None,
         precision=args.precision,
         callbacks=callbacks,
         logger=wandb_logger if args.wandb else None,
