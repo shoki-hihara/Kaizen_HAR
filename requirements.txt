@@ -1,4 +1,4 @@
-torch==1.10
+torch
 torchvision
 pytorch-lightning
 lightning-bolts
@@ -6,3 +6,4 @@ wandb
 scikit-learn
 einops
 torchaudio
+torchmetrics==0.9.3
