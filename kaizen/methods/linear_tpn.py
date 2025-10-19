@@ -31,12 +31,13 @@ class LinearTPNModel(pl.LightningModule):
         super().__init__()
 
         self.backbone = backbone
-        self.classifier = nn.Linear(self.backbone.feature_dim, num_classes)
+        self.classifier = nn.Linear(getattr(backbone, "feature_dim", backbone.out_dim), num_classes)
 
-    freeze_backbone = kwargs.get("freeze_backbone", False)
-    if not freeze_backbone:
-        for p in self.backbone.parameters():
-            p.requires_grad = True
+        # freeze_backbone を kwargs から取得
+        freeze_backbone = kwargs.get("freeze_backbone", False)
+        if not freeze_backbone:
+            for p in self.backbone.parameters():
+                p.requires_grad = True
 
         # CLI引数をまとめて保持
         self.hparams.update(kwargs)
