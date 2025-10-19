@@ -5,28 +5,37 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 class WISDMDataset(Dataset):
-    def __init__(self, data_path, split="train"):
-        """
-        data_path: ディレクトリ。中に train_X.npy, train_y.npy, test_X.npy, test_y.npy がある
-        split: "train" or "test"
-        """
-        if split == "train":
-            self.X = np.load(os.path.join(data_path, "train_X.npy"))
-            self.y = np.load(os.path.join(data_path, "train_y.npy"))
-        else:
-            self.X = np.load(os.path.join(data_path, "test_X.npy"))
-            self.y = np.load(os.path.join(data_path, "test_y.npy"))
+    def __init__(self, data_dir, split="train", transform=None):
+        self.data_dir = data_dir
+        self.split = split
+        self.transform = transform
 
-        # torch tensor に変換
+        x_path = f"{data_dir}/{split}_X.npy"
+        y_path = f"{data_dir}/{split}_y.npy"
+
+        # データ存在確認
+        assert os.path.exists(x_path), f"Missing {x_path}"
+        assert os.path.exists(y_path), f"Missing {y_path}"
+
+        # np.load + デバッグ出力
+        self.X = np.load(x_path, allow_pickle=True)
+        self.y = np.load(y_path, allow_pickle=True)
+
+        print(f"[WISDMDataset] Loaded {split} set: X={self.X.shape}, y={self.y.shape}")
+
+        # torch.tensor化
         self.X = torch.tensor(self.X, dtype=torch.float32)
         self.y = torch.tensor(self.y, dtype=torch.long)
 
     def __len__(self):
-        return len(self.y)
+        return len(self.X)
 
     def __getitem__(self, idx):
-        # X の shape は (channel, timesteps) を想定
-        return self.X[idx], self.y[idx]
+        x = self.X[idx]
+        y = self.y[idx]
+        if self.transform:
+            x = self.transform(x)
+        return x, y
 
 
 def load_wisdm_dataset(data_dir, split="train"):
