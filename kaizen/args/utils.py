@@ -9,6 +9,7 @@ N_CLASSES_PER_DATASET = {
     "imagenet": 1000,
     "imagenet100": 100,
     "domainnet": 345,
+    "wisdm2019": 18,
 }
 
 def strtobool(v):
@@ -38,15 +39,16 @@ def additional_setup_pretrain(args: Namespace):
 
     args.transform_kwargs = {}
 
-    if args.dataset in N_CLASSES_PER_DATASET:
+    if args.dataset == "wisdm2019":
+        args.num_classes = N_CLASSES_PER_DATASET["wisdm2019"]
+        args.cifar = False
+    elif args.dataset in N_CLASSES_PER_DATASET:
         args.num_classes = N_CLASSES_PER_DATASET[args.dataset]
+        args.cifar = True if args.dataset in ["cifar10", "cifar100"] else False
     else:
-        # hack to maintain the current pipeline
-        # even if the custom dataset doesn't have any labels
         dir_path = args.data_dir / args.train_dir
         args.num_classes = max(
-            1,
-            len([entry.name for entry in os.scandir(dir_path) if entry.is_dir]),
+            1, len([entry.name for entry in os.scandir(dir_path) if entry.is_dir])
         )
 
     unique_augs = max(
