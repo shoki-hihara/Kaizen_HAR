@@ -100,7 +100,9 @@ def main():
     backbone = TPNLightning(in_channels=3, feature_dim=getattr(args, "feature_dim", 128))
 
     # LinearTPNModel で classifier 18クラス対応
-    model = LinearTPNModel(backbone=backbone, num_classes=18, **vars(args))
+    args_dict = vars(args).copy()
+    args_dict.pop("num_classes", None)
+    model = LinearTPNModel(backbone=backbone, num_classes=18, **args_dict)
 
     # Checkpoint 継続読み込み
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
