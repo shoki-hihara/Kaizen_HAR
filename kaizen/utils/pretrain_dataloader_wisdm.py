@@ -1,55 +1,58 @@
 import os
 import numpy as np
-import pandas as pd
-from pathlib import Path
-from torch.utils.data import Dataset, DataLoader
-from sklearn.preprocessing import LabelEncoder
-from sklearn.model_selection import train_test_split
 import torch
+from torch.utils.data import TensorDataset, DataLoader, random_split
 
-def prepare_wisdm_dataloaders(train_file, test_file, batch_size=64, num_workers=2):
+def prepare_wisdm_dataloaders(data_dir, batch_size=64, val_ratio=0.1, num_workers=2):
     """
-    WISDM2019 の npy 前処理済みデータを読み込み DataLoader を返す
-    Args:
-        train_file (str): train ファイルのパス (例: "/content/drive/.../train")
-        test_file  (str): test ファイルのパス
-        batch_size (int)
-        num_workers (int)
-    Returns:
-        train_loader, val_loader
+    WISDM 用 DataLoader 準備（pretrain 用）
+    - train データのみ使用
+    - train の一部を val に分割
+    - npy ファイルは前処理済み（ウインドウ化済み）を想定
     """
-    # npy の読み込み
-    X_train = np.load(train_file + "_X.npy")  # shape: (num_samples, window_size, 3)
-    y_train = np.load(train_file + "_y.npy")  # shape: (num_samples,)
-    X_test  = np.load(test_file  + "_X.npy")
-    y_test  = np.load(test_file  + "_y.npy")
 
-    # TensorDataset に変換
-    train_dataset = TensorDataset(torch.from_numpy(X_train).float(),
-                                  torch.from_numpy(y_train).long())
-    val_dataset   = TensorDataset(torch.from_numpy(X_test).float(),
-                                  torch.from_numpy(y_test).long())
+    # -------------------------------
+    # 1️⃣ npy データ読み込み
+    # -------------------------------
+    train_X_path = os.path.join(data_dir, "train_X.npy")
+    train_y_path = os.path.join(data_dir, "train_y.npy")
 
-    # DataLoader
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader   = DataLoader(val_dataset,   batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    X_train = np.load(train_X_path)
+    y_train = np.load(train_y_path)
 
-    return train_loader, val_loader
+    # Tensor に変換
+    X_train = torch.from_numpy(X_train).float()
+    y_train = torch.from_numpy(y_train).long()
 
-def prepare_wisdm_dataloaders(train_file, test_file, batch_size=64, num_workers=2):
-    import torch
-    from torch.utils.data import TensorDataset, DataLoader
+    # -------------------------------
+    # 2️⃣ train / val 分割
+    # -------------------------------
+    num_val = int(len(X_train) * val_ratio)
+    num_train = len(X_train) - num_val
 
-    # train / test は npy で保存されていると仮定
-    X_train = np.load(DATA_DIR + "train_X.npy")
-    y_train = np.load(DATA_DIR + "train_y.npy")
-    X_test = np.load(DATA_DIR + "test_X.npy")
-    y_test = np.load(DATA_DIR + "test_y.npy")
+    train_dataset, val_dataset = random_split(
+        TensorDataset(X_train, y_train),
+        lengths=[num_train, num_val],
+        generator=torch.Generator().manual_seed(42)  # 再現性
+    )
 
-    train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(y_train).long())
-    test_dataset  = TensorDataset(torch.from_numpy(X_test).float(), torch.from_numpy(y_test).long())
+    # -------------------------------
+    # 3️⃣ DataLoader 作成
+    # -------------------------------
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True
+    )
 
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=True
+    )
 
     return train_loader, val_loader
