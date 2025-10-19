@@ -58,10 +58,12 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
         replay_proportion=args.replay_proportion
     )
     
-    # 修正版 (train/test npy を使う)
-    train_file = os.path.join(args.data_dir, "train")
-    test_file  = os.path.join(args.data_dir, "test")
-    train_loader, val_loader = prepare_wisdm_dataloaders(train_file, test_file, batch_size=args.batch_size, num_workers=args.num_workers)
+    train_loader, val_loader = prepare_wisdm_dataloaders(
+        data_dir=args.data_dir,
+        batch_size=args.batch_size,
+        val_ratio=0.1,
+        num_workers=args.num_workers
+    )
     train_loaders = {f"task{args.task_idx}": train_loader}
 
     # replayやonline_evalは必要に応じて追加可能
@@ -172,7 +174,7 @@ def main():
     trainer.fit(
         model,
         train_loaders[f"task{args.task_idx}"],
-        val_dataloaders=val_dataset  # 上で返したval_loader
+        val_dataloaders=val_loader  # DataLoader を渡す
     )
 
 if __name__ == "__main__":
