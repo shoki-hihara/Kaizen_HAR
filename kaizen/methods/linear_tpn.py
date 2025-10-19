@@ -68,8 +68,8 @@ class LinearTPNModel(pl.LightningModule):
         """TPN特徴抽出 + Linear層分類"""
         with torch.no_grad():
             # Conv1dの入力に合わせて次元を転置
-            if X.ndim == 3 and X.shape[1] != 3 and X.shape[2] == 3:
-                X = X.transpose(1, 2)
+            if X.ndim == 3 and X.shape[1] == 384 and X.shape[2] == 3:
+                X = X.transpose(1, 2)  # [batch, seq_len, channels] -> [batch, channels, seq_len]
             feats = self.backbone(X)
         logits = self.classifier(feats)
         return {"feats": feats, "logits": logits}
