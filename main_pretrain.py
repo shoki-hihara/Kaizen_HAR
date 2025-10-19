@@ -10,8 +10,8 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 
 from kaizen.methods.dataloader import load_wisdm_dataset, get_dataloader
-from tpn_model import TPN
-from linear_tpn_model import LinearTPNModel
+from kaizen.methods import TPN
+from kaizen.methods import LinearTPNModel
 
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.methods import METHODS
