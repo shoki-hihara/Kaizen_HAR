@@ -35,9 +35,10 @@ def map_labels_to_tasks():
     ]
     
     label_to_task = {}
-    for task_idx, labels in task_classes.items():
+    for idx, labels in enumerate(task_classes):
         for label in labels:
-            label_to_task[label] = task_idx
+            label_to_task[label] = idx
+
     return task_classes, label_to_task
 
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
@@ -69,6 +70,7 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
         train_loaders.update({"replay": replay_loader})
 
     # online_eval データ
+    online_eval_labels = sum(tasks[:task_idx + 1], [])
     online_eval_indices = [i for i, (_, y) in enumerate(test_dataset) if y in sum(tasks[:task_idx + 1], [])]
     online_eval_dataset = Subset(test_dataset, online_eval_indices)
     online_eval_loader = DataLoader(online_eval_dataset, batch_size=len(online_eval_dataset) // len(task_loader),
