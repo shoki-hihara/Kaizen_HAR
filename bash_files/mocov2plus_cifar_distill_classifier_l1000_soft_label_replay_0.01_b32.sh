@@ -1,6 +1,6 @@
 python3 main_continual.py \
-    --dataset cifar100 \
-    --encoder resnet18 \
+    --dataset wisdm2019 \
+    --encoder tpn \
     --data_dir $DATA_DIR \
     --split_strategy class \
     --max_epochs 2 \
