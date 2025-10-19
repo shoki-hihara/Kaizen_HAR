@@ -92,6 +92,8 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
+    print(f"[DEBUG] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders]}")
+
     # モデル構築
     feature_dim = getattr(args, "feature_dim", 128)
     backbone = TPN(in_channels=3, feature_dim=feature_dim)
