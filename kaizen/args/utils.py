@@ -158,7 +158,7 @@ def additional_setup_pretrain(args: Namespace):
             for kwargs in args.transform_kwargs:
                 del kwargs["size"]
 
-    args.cifar = True if args.dataset in ["cifar10", "cifar100"] else False
+    # args.cifar = True if args.dataset in ["cifar10", "cifar100"] else False
 
     if args.dali:
         assert args.dataset in ["imagenet100", "imagenet", "domainnet", "custom"]
