@@ -1,5 +1,6 @@
 import os
 import random
+import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -10,6 +11,7 @@ from pytorch_lightning.loggers import WandbLogger
 from kaizen.methods import TPN, LinearTPNModel
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
+
 
 def map_labels_to_tasks():
     task_classes = [
@@ -25,6 +27,7 @@ def map_labels_to_tasks():
         for label in labels:
             label_to_task[label] = idx
     return task_classes, label_to_task
+
 
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
     train_loader, val_loader = prepare_wisdm_dataloaders(
@@ -46,6 +49,7 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
 
     return train_loaders, val_loader
 
+
 def set_seed(seed: int = 5):
     random.seed(seed)
     np.random.seed(seed)
@@ -53,6 +57,7 @@ def set_seed(seed: int = 5):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+
 
 def main():
     args = parse_args_pretrain()
@@ -111,13 +116,14 @@ def main():
     # -----------------------------
     # Checkpoint
     # -----------------------------
+    checkpoint_callback = None
     if args.save_checkpoint:
         checkpoint_callback = ModelCheckpoint(
             dirpath=args.checkpoint_dir,
             filename="last",
             save_last=True,
             save_top_k=1,
-            monitor="val_loss",  # <<< ReduceLROnPlateau 対応
+            monitor="val_loss",  # ReduceLROnPlateau 用
             verbose=True
         )
         callbacks.append(checkpoint_callback)
@@ -150,7 +156,7 @@ def main():
     # -----------------------------
     # Trainer
     # -----------------------------
-    trainer = Trainer(
+    trainer_kwargs = dict(
         max_epochs=args.max_epochs,
         accelerator=accelerator,
         devices=devices,
@@ -158,6 +164,11 @@ def main():
         callbacks=callbacks,
         logger=wandb_logger
     )
+
+    if getattr(args, "scheduler", "").lower() == "reduce_on_plateau":
+        trainer_kwargs["monitor"] = "val_loss"
+
+    trainer = Trainer(**trainer_kwargs)
 
     # -----------------------------
     # 学習開始
@@ -169,14 +180,22 @@ def main():
     )
 
     # -----------------------------
-    # Task 0 checkpoint 保存
+    # Task 0 checkpoint 保存 & last_checkpoint.txt 作成
     # -----------------------------
     if args.task_idx == 0 and args.save_checkpoint:
-        if checkpoint_callback is not None:
-            print(f"[INFO] Checkpoint saved to {last_ckpt_path}")
-        else:
-            trainer.save_checkpoint(last_ckpt_path)
-            print(f"[INFO] Checkpoint saved manually to {last_ckpt_path}")
+        trainer.save_checkpoint(last_ckpt_path)
+        print(f"[INFO] Checkpoint saved to {last_ckpt_path}")
+
+        # last_checkpoint.txt & last_args.json を作成
+        last_checkpoint_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
+        with open(last_checkpoint_txt, "w") as f:
+            f.write(f"{last_ckpt_path}\n")
+        args_json_path = os.path.join(args.checkpoint_dir, "last_args.json")
+        with open(args_json_path, "w") as f:
+            json.dump(vars(args), f)
+        print(f"[INFO] last_checkpoint.txt created at {last_checkpoint_txt}")
+        print(f"[INFO] last_args.json created at {args_json_path}")
+
 
 if __name__ == "__main__":
     main()
