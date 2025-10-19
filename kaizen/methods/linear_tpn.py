@@ -75,7 +75,6 @@ class LinearTPNModel(pl.LightningModule):
         return {"feats": feats, "logits": logits}
 
     def configure_optimizers(self):
-        """Linear層のみのOptimizer/Scheduler設定"""
         optimizer_name = self.hparams.get("optimizer", "sgd")
         lr = self.hparams.get("lr", 0.1)
         weight_decay = self.hparams.get("weight_decay", 1e-4)
@@ -87,10 +86,14 @@ class LinearTPNModel(pl.LightningModule):
         else:
             raise ValueError(f"{optimizer_name} not in (sgd, adam)")
     
-        # hparams の中から lr と weight_decay は除外して渡す
-        extra_optimizer_args = {
-            k: v for k, v in self.hparams.items() if k not in ["lr", "weight_decay", "optimizer"]
-        }
+        # SGD/Adam に渡してはいけない hparams を除外
+        exclude_keys = [
+            "optimizer", "lr", "weight_decay", "dataset", "num_tasks", "task_idx",
+            "gpus", "precision", "batch_size", "num_workers", "name",
+            "project", "entity", "offline", "wandb", "save_checkpoint",
+            "checkpoint_dir",
+        ]
+        extra_optimizer_args = {k: v for k, v in self.hparams.items() if k not in exclude_keys}
     
         optimizer = optimizer_cls(
             self.classifier.parameters(),
@@ -105,6 +108,7 @@ class LinearTPNModel(pl.LightningModule):
                 exclude_bias_n_norm=self.hparams.get("exclude_bias_n_norm", False),
             )
     
+        # scheduler 部分は前回と同じ
         scheduler_name = self.hparams.get("scheduler", "reduce")
         max_epochs = self.hparams.get("max_epochs", 100)
         lr_decay_steps = self.hparams.get("lr_decay_steps", None)
@@ -130,6 +134,7 @@ class LinearTPNModel(pl.LightningModule):
             raise ValueError(f"{scheduler_name} not supported")
     
         return [optimizer], [scheduler]
+
 
     def shared_step(self, batch: Tuple, batch_idx: int):
         *_, X, target = batch
