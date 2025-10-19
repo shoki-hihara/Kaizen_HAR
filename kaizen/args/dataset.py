@@ -17,6 +17,7 @@ def dataset_args(parser: ArgumentParser):
         "imagenet100",
         "domainnet",
         "custom",
+        "wisdm2019",
     ]
 
     parser.add_argument("--dataset", choices=SUPPORTED_DATASETS, type=str, required=True)
