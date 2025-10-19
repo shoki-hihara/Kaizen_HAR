@@ -28,12 +28,12 @@ def map_labels_to_tasks():
     HARのタスク分割ラベルマッピング
     """
     task_classes = [
-        [17, 2, 0],    # タスク1　"folding_clothes", "climb_stairs", "walking"
-        [3, 10, 4],    # タスク2　"sitting", "drinking", "eating_fries"
-        [4, 11, 16],   # タスク3　"standing", "eating_sandwich", "clapping_hands"
-        [6, 1, 9],     # タスク4　"brushing_teeth", "jogging", "eating_pasta"
-        [7, 15, 5],    # タスク5　"eating_soup", "writing", "typing"
-        [13, 12, 14],  # タスク6　"catching_ball", "kicking_soccer", "dribbling_basketball"
+        [17, 2, 0],    # タスク1
+        [3, 10, 4],    # タスク2
+        [4, 11, 16],   # タスク3
+        [6, 1, 9],     # タスク4
+        [7, 15, 5],    # タスク5
+        [13, 12, 14],  # タスク6
     ]
     
     label_to_task = {}
@@ -72,8 +72,8 @@ def set_seed(seed: int = 5):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True  # 再現性重視
-    torch.backends.cudnn.benchmark = False     # 再現性重視
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def main():
     SEED = 5
@@ -125,8 +125,8 @@ def main():
             filename="last",
             save_last=True,
             save_top_k=1,
-            monitor=None,
-            verbose=True   # 保存状況をログに出力
+            monitor=None,  # <<< ReduceLROnPlateau を使わない場合は None
+            verbose=True
         )
         callbacks.append(checkpoint_callback)
 
@@ -139,15 +139,12 @@ def main():
     trainer = Trainer(
         max_epochs=args.max_epochs,
         accelerator="gpu" if gpu_arg > 0 else "cpu",
-        devices=1 if gpu_arg > 0 else None,   # ← ここを修正
-        precision=args.precision,
+        devices=1 if gpu_arg > 0 else None,
+        precision=args.precision if gpu_arg > 0 else 32,  # <<< CPU の場合は AMP は使えないので 32 に
         callbacks=callbacks,
         logger=wandb_logger if args.wandb else None,
     )
 
-    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
-    
-    # Task 1 以降でのみ checkpoint をロード
     last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
     if args.task_idx != 0:
         if not os.path.exists(last_ckpt_path):
