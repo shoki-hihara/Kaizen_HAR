@@ -63,18 +63,20 @@ def window_data(df, window_size=384, step_size=384):
 
     return np.array(X), np.array(y)
 
-def prepare_wisdm_dataloaders(csv_path, batch_size=64, window_size=384, step_size=384, val_ratio=0.2, num_workers=4):
-    df, label_encoder = load_wisdm_csv(csv_path)
-    X, y = window_data(df, window_size, step_size)
+def prepare_wisdm_dataloaders(train_file, test_file, batch_size=64, num_workers=2):
+    import torch
+    from torch.utils.data import TensorDataset, DataLoader
 
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=val_ratio, random_state=42, stratify=y
-    )
+    # train / test は npy で保存されていると仮定
+    X_train = np.load(DATA_DIR + "train_X.npy")
+    y_train = np.load(DATA_DIR + "train_y.npy")
+    X_test = np.load(DATA_DIR + "test_X.npy")
+    y_test = np.load(DATA_DIR + "test_y.npy")
 
-    train_dataset = WISDMDataset(X_train, y_train)
-    val_dataset = WISDMDataset(X_val, y_val)
+    train_dataset = TensorDataset(torch.from_numpy(X_train).float(), torch.from_numpy(y_train).long())
+    test_dataset  = TensorDataset(torch.from_numpy(X_test).float(), torch.from_numpy(y_test).long())
 
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    val_loader   = DataLoader(test_dataset,  batch_size=batch_size, shuffle=False, num_workers=num_workers)
 
-    return train_loader, val_loader, label_encoder
+    return train_loader, val_loader
