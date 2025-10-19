@@ -45,37 +45,26 @@ def map_labels_to_tasks():
 
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
     """
-    WISDM 用の train/val loader 構築
+    WISDM 用の train/val loader 構築（pretrain向け）
     """
-    # データをwindow化してDataLoader作成
-    train_loaders, val_dataset = prepare_task_datasets(
-        data_dir=args.data_dir,
-        task_idx=args.task_idx,
-        tasks=tasks,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        replay=args.replay,
-        replay_proportion=args.replay_proportion
-    )
-    
+    # train データをロードし、val に分割
     train_loader, val_loader = prepare_wisdm_dataloaders(
-        data_dir=args.data_dir,
-        batch_size=args.batch_size,
+        data_dir=data_dir,
+        batch_size=batch_size,
         val_ratio=0.1,
-        num_workers=args.num_workers
+        num_workers=num_workers
     )
-    train_loaders = {f"task{args.task_idx}": train_loader}
 
-    # replayやonline_evalは必要に応じて追加可能
+    train_loaders = {f"task{task_idx}": train_loader}
+
+    # replay（必要に応じて）
     if replay and task_idx != 0:
-        # replayロジック（同じtrain_loaderからサンプル抽出）
         replay_sample_size = max(1, int(len(train_loader.dataset) * replay_proportion))
         indices = np.random.choice(len(train_loader.dataset), size=replay_sample_size, replace=False)
         replay_dataset = torch.utils.data.Subset(train_loader.dataset, indices)
         replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         train_loaders["replay"] = replay_loader
 
-    # val_loader は trainer.fit の val_dataloaders に渡す
     return train_loaders, val_loader
 
 def set_seed(seed: int = 5):
@@ -97,7 +86,7 @@ def main():
     tasks, label_to_task = map_labels_to_tasks()
 
     # HAR データセット準備
-    train_loaders, val_dataset = prepare_task_datasets(
+    train_loaders, val_loader = prepare_task_datasets(
         data_dir=args.data_dir,
         task_idx=args.task_idx,
         tasks=tasks,
@@ -174,7 +163,7 @@ def main():
     trainer.fit(
         model,
         train_loaders[f"task{args.task_idx}"],
-        val_dataloaders=val_loader  # DataLoader を渡す
+        val_dataloaders=val_loader
     )
 
 if __name__ == "__main__":
