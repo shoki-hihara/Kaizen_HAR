@@ -12,6 +12,7 @@ from kaizen.methods.simsiam import SimSiam
 from kaizen.methods.swav import SwAV
 from kaizen.methods.vicreg import VICReg
 from kaizen.methods.wmse import WMSE
+from kaizen.methods.full_model import FullModel
 from kaizen.methods.tpn import TPN
 from kaizen.methods.linear_tpn import LinearTPNModel
 from kaizen.methods.dataloader import WISDMDataset
