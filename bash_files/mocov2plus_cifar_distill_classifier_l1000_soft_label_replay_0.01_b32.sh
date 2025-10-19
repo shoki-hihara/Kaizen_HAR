@@ -4,7 +4,7 @@ python3 main_continual.py \
     --data_dir $DATA_DIR \
     --split_strategy class \
     --max_epochs 2 \
-    --num_tasks 5 \
+    --num_tasks 6 \
     --task_idx 0 \
     --gpus 0 \
     --precision 16 \
