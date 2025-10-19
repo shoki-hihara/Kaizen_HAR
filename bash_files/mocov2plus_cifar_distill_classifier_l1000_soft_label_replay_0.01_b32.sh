@@ -26,8 +26,8 @@ python3 main_continual.py \
     --gaussian_prob 0.0 0.0 \
     --solarization_prob 0.0 0.2 \
     --name cifar100-mocov2plus-contrastive-distill-classifier-l1000-soft-label-replay-0.01-b32 \
-    --project ever-learn \
-    --entity your_entity \
+    --project Kaizen_HAR_TEST \
+    --entity crazy-sonnet-ambl \
     --offline \
     --wandb \
     --save_checkpoint \
