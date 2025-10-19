@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, Subset
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
 
 from kaizen.methods.dataloader import load_wisdm_dataset, get_dataloader
 from kaizen.methods import TPN
@@ -132,22 +133,34 @@ def main():
         callbacks.append(lr_monitor)
 
     if args.save_checkpoint:
-        ckpt = Checkpointer(
-            args,
-            logdir=args.checkpoint_dir,
-            frequency=args.checkpoint_frequency,
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=args.checkpoint_dir,
+            filename="last",
+            save_last=True,
+            save_top_k=1,
+            monitor=None
         )
-        callbacks.append(ckpt)
+        callbacks.append(checkpoint_callback)
 
     trainer = Trainer.from_argparse_args(
         args,
-        logger=wandb_logger,
+        logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
-        checkpoint_callback=False,
         terminate_on_nan=True,
     )
 
-    trainer.fit(model, train_loaders, val_dataloaders=None)
+    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
+    
+    # Task 1 以降でのみ checkpoint をロード
+    if args.task_idx != 0:
+        if not os.path.exists(last_ckpt_path):
+            raise FileNotFoundError(f"Task 0 checkpoint not found at {last_ckpt_path}")
+        print(f"[INFO] Loading checkpoint from {last_ckpt_path} for Task {args.task_idx}")
+        model = LinearTPNModel.load_from_checkpoint(last_ckpt_path, backbone=model.backbone, num_classes=len(sum(tasks, [])))
+    
+    # fit 呼び出し
+    train_loader_to_use = train_loaders[f"task{args.task_idx}"]
+    trainer.fit(model, train_loader_to_use, val_dataloaders=None)
 
 if __name__ == "__main__":
     main()
