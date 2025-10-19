@@ -28,6 +28,7 @@ class TPN(nn.Module):
 class TPNLightning(pl.LightningModule):
     def __init__(self, in_channels=3, feature_dim=128, num_classes=6, lr=1e-3):
         super().__init__()
+        self.feature_dim = feature_dim
         self.save_hyperparameters()
         self.backbone = TPN(in_channels=in_channels, feature_dim=feature_dim)
         self.classifier = nn.Linear(feature_dim, num_classes)
