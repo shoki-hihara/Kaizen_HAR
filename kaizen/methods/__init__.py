@@ -55,7 +55,7 @@ __all__ = [
     "SwAV",
     "VICReg",
     "WMSE",
-    "TPN",
+    "TPNLightning",
     "LinearTPNModel",
     "WISDMDataset",
 ]
