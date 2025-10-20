@@ -1,5 +1,4 @@
-# main_pretrain.py (修正版)
-
+# main_pretrain.py（修正版）
 import os
 import json
 import random
@@ -55,7 +54,7 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
         replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
         loaders["replay"] = replay_loader
 
-    return loaders, val_loader
+    return loaders, val_loader, train_loader
 
 # -----------------------------
 # 再現性の確保
@@ -86,21 +85,8 @@ def main():
     tasks, label_to_task = map_labels_to_tasks()
     task_idx = getattr(args, "task_idx", 0)
 
-    # 過去タスク用データローダを保持
-    past_task_loaders = []
-    for prev_task_idx in range(task_idx):
-        prev_loaders, _ = prepare_task_datasets(
-            data_dir=args.data_dir,
-            task_idx=prev_task_idx,
-            tasks=tasks,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-            replay=False
-        )
-        past_task_loaders.append(prev_loaders[f"task{prev_task_idx}"])
-
-    # データ準備（現在タスク）
-    train_loaders, val_loader = prepare_task_datasets(
+    # データ準備
+    train_loaders, val_loader, current_train_loader = prepare_task_datasets(
         data_dir=args.data_dir,
         task_idx=task_idx,
         tasks=tasks,
@@ -109,6 +95,17 @@ def main():
         replay=args.replay,
         replay_proportion=args.replay_proportion
     )
+
+    # 過去タスクの DataLoader を収集（累積評価用）
+    past_task_loaders = []
+    for past_idx in range(task_idx):
+        prev_train_loader, _ = prepare_wisdm_dataloaders(
+            data_dir=args.data_dir,
+            batch_size=args.batch_size,
+            val_ratio=0.1,
+            num_workers=args.num_workers
+        )
+        past_task_loaders.append(prev_train_loader)
 
     # -----------------------------
     # TPNLightning: 特徴量抽出
@@ -140,21 +137,21 @@ def main():
     print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
 
     # -----------------------------
-    # LinearTPN: 簡易評価 + 過去タスク累積評価
+    # LinearTPN: 簡易評価
     # -----------------------------
     args_dict = vars(args).copy()
     args_dict.pop("num_classes", None)
     linear_model = LinearTPNModel(
         backbone=backbone,
         num_classes=18,
-        past_task_loaders=past_task_loaders,
+        past_task_loaders=past_task_loaders,  # 過去タスク DataLoader を渡す
         **args_dict
     )
 
     linear_model.hparams["tasks"] = tasks
     linear_model.hparams["split_strategy"] = "class"
     linear_model.hparams["task_idx"] = task_idx
-
+    
     callbacks = []
     wandb_logger = None
     if args.wandb:
@@ -196,9 +193,11 @@ def main():
             val_dataloaders=val_loader) 
 
     # -----------------------------
-    # 過去タスクを含めた累積評価
+    # 過去タスク累積評価
     # -----------------------------
-    linear_model.evaluate_past_tasks()
+    if linear_model.past_task_loaders:
+        print(f"[INFO] Evaluating past tasks for Task {task_idx}")
+        linear_model.evaluate_past_tasks()
 
     # -----------------------------
     # checkpoint保存 & last_checkpoint.txt 更新
