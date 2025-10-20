@@ -163,10 +163,12 @@ def main():
         trainer.save_checkpoint(last_ckpt_path)
         print(f"[INFO] Saved checkpoint to {last_ckpt_path}")
 
-        # JSON保存（継続学習用）
-        with open(os.path.join(args.checkpoint_dir, "last_args.json"), "w") as f:
-            json.dump(vars(args), f)
-
+        with open(os.path.join(exp_dir, "args.json"), "w") as f:
+            json.dump(
+                {k: str(v) if isinstance(v, (Path, PosixPath)) else v for k, v in vars(args).items()},
+                f,
+                indent=4
+            )
 
 if __name__ == "__main__":
     main()
