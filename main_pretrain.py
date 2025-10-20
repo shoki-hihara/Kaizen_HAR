@@ -168,9 +168,13 @@ def main():
         devices=1 if torch.cuda.is_available() else None,
         precision=args.precision if torch.cuda.is_available() else 32,
         callbacks=callbacks,
-        logger=wandb_logger
+        logger=wandb_logger,
+        log_every_n_steps=10,
+        enable_progress_bar=True
     )
-    trainer.fit(linear_model, train_dataloaders=train_loaders[f"task{task_idx}"])
+    trainer.fit(linear_model,
+            train_dataloaders=train_loaders[f"task{task_idx}"],
+            val_dataloaders=val_loader) 
 
     # -----------------------------
     # checkpoint保存 & last_checkpoint.txt 更新
