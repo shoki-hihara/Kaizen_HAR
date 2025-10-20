@@ -81,16 +81,6 @@ def parse_args_pretrain(input_args=None) -> argparse.Namespace:
 
 
 def parse_args_linear() -> argparse.Namespace:
-    """Parses feature extractor, dataset, pytorch lightning, linear eval specific and additional args.
-
-    First adds and arg for the pretrained feature extractor, then adds dataset, pytorch lightning
-    and linear eval specific args. If wandb is enabled, it adds checkpointer args. Finally, adds
-    additional non-user given parameters.
-
-    Returns:
-        argparse.Namespace: a namespace containing all args needed for pretraining.
-    """
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--pretrained_feature_extractor", type=str)
@@ -101,8 +91,11 @@ def parse_args_linear() -> argparse.Namespace:
     # add pytorch lightning trainer args
     parser = pl.Trainer.add_argparse_args(parser)
 
-    # linear model
+    # Linear model
     parser = METHODS["linear_tpn"].add_model_specific_args(parser)
+
+    # --- ここで WandB 引数を追加 ---
+    parser.add_argument("--wandb", action="store_true")
 
     # THIS LINE IS KEY TO PULL WANDB
     temp_args, _ = parser.parse_known_args()
@@ -122,44 +115,53 @@ def parse_args_linear() -> argparse.Namespace:
     print("Unknown Args:", unknown_args)
     additional_setup_linear(args)
 
+    # --- 追加修正: validation step がある場合に自動で val_dataloader を用意 ---
+    if not hasattr(args, "val_dataloader") or args.val_dataloader is None:
+        args.val_dataloader = True  # True フラグを渡すだけで Trainer 側で自動対応
+
     return args
 
+
 def parse_args_eval() -> argparse.Namespace:
-    """Parses trained model, dataset, pytorch lightning, evaluation specific and additional args.
-
-    First adds and arg for the pretrained model, then adds dataset, pytorch lightning
-    and eval specific args. If wandb is enabled, it adds checkpointer args. Finally, adds
-    additional non-user given parameters.
-
-    Returns:
-        argparse.Namespace: a namespace containing all args needed for pretraining.
-    """
-
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--pretrained_model", type=str)
-    parser.add_argument("--evaluation_mode", choices=["linear_eval", "classifier_eval", "online_classifier_eval"], default="linear_eval", type=str)
-    parser.add_argument("--linear_classifier_training_data_source", choices=["all_tasks", "seen_tasks", "current_task"], default="all_tasks", type=str)
+    parser.add_argument(
+        "--evaluation_mode",
+        choices=["linear_eval", "classifier_eval", "online_classifier_eval"],
+        default="linear_eval",
+        type=str
+    )
+    parser.add_argument(
+        "--linear_classifier_training_data_source",
+        choices=["all_tasks", "seen_tasks", "current_task"],
+        default="all_tasks",
+        type=str
+    )
 
     # Memory Bank/Replay args
     parser.add_argument("--replay", type=strtobool, default=False)
     parser.add_argument("--replay_proportion", type=float, default=1.0)
     parser.add_argument("--replay_memory_bank_size", type=int, default=None)
+
     # add shared arguments
     dataset_args(parser)
 
     # add pytorch lightning trainer args
     parser = pl.Trainer.add_argparse_args(parser)
 
-    # linear model
+    # Linear model
     parser = METHODS["full_model"].add_model_specific_args(parser)
+
+    # --- WandB 引数を追加 ---
+    parser.add_argument("--wandb", action="store_true")
 
     # THIS LINE IS KEY TO PULL WANDB
     temp_args, _ = parser.parse_known_args()
 
     parser.add_argument("--save_checkpoint", action="store_true")
     parser.add_argument("--num_tasks", type=int, default=2)
-    parser.add_argument("--task_idx", type=int) # For linear classifier training only
+    parser.add_argument("--task_idx", type=int)  # For linear classifier training only
     SPLIT_STRATEGIES = ["class", "data", "domain"]
     parser.add_argument("--split_strategy", choices=SPLIT_STRATEGIES, type=str, required=True)
     parser.add_argument("--domain", type=str, default=None)
@@ -172,7 +174,12 @@ def parse_args_eval() -> argparse.Namespace:
     args, unknown_args = parser.parse_known_args()
     print("Unknown Args:", unknown_args)
     additional_setup_linear(args)
+
     if len(args.classifier_layers) < len(args.online_eval_classifier_layers):
         args.classifier_layers = args.online_eval_classifier_layers
+
+    # --- 追加修正: validation step がある場合に自動で val_dataloader を用意 ---
+    if not hasattr(args, "val_dataloader") or args.val_dataloader is None:
+        args.val_dataloader = True
 
     return args
