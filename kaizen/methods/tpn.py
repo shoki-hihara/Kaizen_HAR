@@ -26,34 +26,51 @@ class TPN(nn.Module):
         return x
 
 
-
 class TPNLightning(pl.LightningModule):
-    def __init__(self, in_channels=3, feature_dim=128, num_classes=6, lr=1e-3):
+    def __init__(self, in_channels=3, feature_dim=128, num_classes=6, lr=1e-3, extractor=False):
+        """
+        extractor=True なら特徴量抽出のみ
+        extractor=False なら分類器付き
+        """
         super().__init__()
         self.feature_dim = feature_dim
         self.save_hyperparameters()
         self.backbone = TPN(in_channels=in_channels, feature_dim=feature_dim)
-        self.classifier = nn.Linear(feature_dim, num_classes)
+        self.extractor = extractor
+        if not extractor:
+            self.classifier = nn.Linear(feature_dim, num_classes)
+        else:
+            self.classifier = None
         self.lr = lr
 
     def forward(self, x, return_features=False):
         z = self.backbone(x)
-        if return_features:
+        if self.extractor or return_features:
             return z
         return self.classifier(z)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits, y)
+        if self.extractor:
+            # pretrain中は特徴量抽出のみなので損失計算は別途ContrastiveLossなどを利用
+            # ここでは仮にダミー損失0で通す
+            loss = torch.tensor(0.0, device=x.device)
+        else:
+            logits = self(x)
+            loss = F.cross_entropy(logits, y)
         self.log("train_loss", loss)
         return loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        logits = self(x)
-        loss = F.cross_entropy(logits, y)
-        acc = (logits.argmax(dim=-1) == y).float().mean()
+        if self.extractor:
+            z = self(x, return_features=True)
+            loss = torch.tensor(0.0, device=x.device)
+            acc = torch.tensor(0.0, device=x.device)
+        else:
+            logits = self(x)
+            loss = F.cross_entropy(logits, y)
+            acc = (logits.argmax(dim=-1) == y).float().mean()
         self.log("val_loss", loss, prog_bar=True)
         self.log("val_acc", acc, prog_bar=True)
 
