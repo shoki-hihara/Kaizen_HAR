@@ -173,8 +173,11 @@ class LinearTPNModel(pl.LightningModule):
         return results
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
-        """現タスク + 過去タスクの累積評価"""
-        # --- 現タスク ---
+        """現タスク + 過去タスクの評価（未学習タスクはスキップ）"""
+        if self.trainer.sanity_checking:
+            return
+    
+        # --- 現タスク全体の集計 ---
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
@@ -183,95 +186,79 @@ class LinearTPNModel(pl.LightningModule):
             "val_acc1": val_acc1,
             "val_acc5": val_acc5
         }
-
-        if not self.trainer.sanity_checking:
-            preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
-            targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
-            mask_correct = preds == targets
-
-            split_strategy = self.hparams.get("split_strategy", "class")
-            tasks = self.hparams.get("tasks", None)
-
-            if split_strategy == "class" and tasks is not None:
-                current_task_idx = getattr(self.hparams, "task_idx", 0)
-                for task_idx, task in enumerate(tasks):
-                    # 未学習タスクはスキップ
-                    if task_idx > current_task_idx:
-                        continue
-
-                    mask_task = np.isin(targets, np.array(task))
-                    if mask_task.sum() == 0:
-                        continue
-
-                    correct_task = np.logical_and(mask_task, mask_correct).sum()
-                    acc_task = correct_task / mask_task.sum()
-                    log[f"val_acc1_task{task_idx}"] = acc_task
-
-            if self.past_task_loaders:
-                current_task_idx = getattr(self.hparams, "task_idx", 0)
-                for task_idx, loader in enumerate(self.past_task_loaders):
-                    if task_idx >= current_task_idx:
-                        continue
-
-                    preds_list, targets_list = [], []
-                    try:
-                        for batch in loader:
-                            _, _, _, _, logits = self.shared_step(batch, 0)
-                            preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                            targets_list.append(batch[-1].cpu().numpy())
-                    except Exception as e:
-                        print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
-                        continue
-
-                    if len(preds_list) == 0:
-                        continue
-
-                    preds_past = np.concatenate(preds_list)
-                    targets_past = np.concatenate(targets_list)
-                    cum_acc = (preds_past == targets_past).sum() / len(targets_past)
-                    log[f"cum_acc_task{task_idx}"] = cum_acc
-
-        # --- 🔧 None や nan を除去してからログ ---
-        clean_log = {
-            k: v for k, v in log.items()
-            if v is not None and not (isinstance(v, float) and np.isnan(v))
-        }
-        self.log_dict(clean_log, sync_dist=True)
-
-
-
+    
+        # --- 現タスク・過去タスク別評価 ---
+        preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
+        targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
+        mask_correct = preds == targets
+    
+        split_strategy = getattr(self.hparams, "split_strategy", "class")
+        tasks = getattr(self.hparams, "tasks", None)
+        current_task_idx = getattr(self.hparams, "task_idx", 0)
+    
+        if split_strategy == "class" and tasks is not None:
+            for task_idx, task in enumerate(tasks):
+                # --- 未学習タスクは完全スキップ ---
+                if task_idx > current_task_idx:
+                    continue
+    
+                mask_task = np.isin(targets, np.array(task))
+                if mask_task.sum() == 0:
+                    continue
+    
+                correct_task = np.logical_and(mask_task, mask_correct).sum()
+                acc_task = correct_task / mask_task.sum()
+                log[f"val_acc1_task{task_idx}"] = float(acc_task)
+    
+        # --- 過去タスク累積評価 ---
+        if hasattr(self, "past_task_loaders") and self.past_task_loaders:
+            for task_idx, loader in enumerate(self.past_task_loaders):
+                if task_idx > current_task_idx:
+                    continue
+    
+                preds_list, targets_list = [], []
+                try:
+                    for batch in loader:
+                        _, _, _, _, logits = self.shared_step(batch, 0)
+                        preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                        targets_list.append(batch[-1].cpu().numpy())
+                except Exception as e:
+                    print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
+                    continue
+    
+                if not preds_list:
+                    continue
+    
+                preds_past = np.concatenate(preds_list)
+                targets_past = np.concatenate(targets_list)
+                cum_acc = (preds_past == targets_past).sum() / len(targets_past)
+                log[f"cum_acc_task{task_idx}"] = float(cum_acc)
+    
+        # --- WandB出力 ---
+        self.log_dict(log, sync_dist=True)
+    
+    
     def evaluate_past_tasks(self):
-        """過去タスクも含めた累積評価（未学習タスクはスキップ）"""
-        if not self.past_task_loaders:
+        """学習完了後に過去タスクの累積精度を個別計算"""
+        if not hasattr(self, "past_task_loaders") or not self.past_task_loaders:
             return
     
-        all_logs = {}
-        current_task_idx = getattr(self, "hparams", {}).get("task_idx", 0)
-    
+        current_task_idx = getattr(self.hparams, "task_idx", 0)
         for task_idx, loader in enumerate(self.past_task_loaders):
-            # 未学習タスクはスキップ
-            if task_idx >= current_task_idx:
-                continue
+            if task_idx > current_task_idx:
+                continue  # 未学習タスクはスキップ
     
             preds_list, targets_list = [], []
-            try:
-                for batch in loader:
-                    _, _, _, _, logits = self.shared_step(batch, 0)
-                    preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                    targets_list.append(batch[-1].cpu().numpy())
-            except Exception as e:
-                print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
+            for batch in loader:
+                _, _, _, _, logits = self.shared_step(batch, 0)
+                preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                targets_list.append(batch[-1].cpu().numpy())
+    
+            if not preds_list:
                 continue
     
-            if len(preds_list) == 0:
-                continue
-    
-            preds = np.concatenate(preds_list)
-            targets = np.concatenate(targets_list)
-            correct_task = (preds == targets).sum() / len(targets)
-            all_logs[f"val_acc1_task{task_idx}"] = correct_task
-    
-        if all_logs:
-            import wandb
-            wandb.log(all_logs, step=current_task_idx)
-            print(f"[INFO] Past task evaluation logs: {all_logs}")
+            preds_past = np.concatenate(preds_list)
+            targets_past = np.concatenate(targets_list)
+            acc = (preds_past == targets_past).sum() / len(targets_past)
+            print(f"[INFO] Cumulative accuracy for Task {task_idx}: {acc:.4f}")
+            self.log(f"cum_acc_task{task_idx}", acc, sync_dist=True)
