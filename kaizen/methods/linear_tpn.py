@@ -20,7 +20,7 @@ from torch.optim.lr_scheduler import (
 
 
 class LinearTPNModel(pl.LightningModule):
-    def __init__(self, backbone: nn.Module, num_classes: int, **kwargs):
+    def __init__(self, backbone: nn.Module, num_classes: int, past_task_loaders: Optional[List[DataLoader]] = None, **kwargs):
         """TPN用のLinear評価モデル
 
         Args:
