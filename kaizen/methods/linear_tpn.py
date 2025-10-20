@@ -140,7 +140,12 @@ class LinearTPNModel(pl.LightningModule):
     def shared_step(self, batch: Tuple, batch_idx: int):
         *_, X, target = batch
         batch_size = X.size(0)
-
+    
+        # GPU に移動
+        device = next(self.parameters()).device
+        X = X.to(device)
+        target = target.to(device)
+    
         logits = self(X)["logits"]
         loss = F.cross_entropy(logits, target)
         acc1, acc5 = accuracy_at_k(logits, target, top_k=(1, 5))
