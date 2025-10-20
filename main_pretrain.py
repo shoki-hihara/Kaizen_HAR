@@ -95,6 +95,18 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
+    # 過去タスクの val loader 収集（累積評価用）
+    past_task_loaders = []
+    for t in range(task_idx):
+        _, past_val_loader = prepare_task_datasets(
+            data_dir=args.data_dir,
+            task_idx=t,
+            tasks=tasks,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers
+        )
+        past_task_loaders.append(past_val_loader)
+
     # -----------------------------
     # TPNLightning: 特徴量抽出
     # -----------------------------
@@ -132,11 +144,12 @@ def main():
     linear_model = LinearTPNModel(
         backbone=backbone,
         num_classes=18,
+        past_task_loaders=past_task_loaders,  # ここで渡す
         eval_linear=True,
         **args_dict
     )
 
-    linear_model.hparams["tasks"] = tasks        # map_labels_to_tasks() で取得
+    linear_model.hparams["tasks"] = tasks
     linear_model.hparams["split_strategy"] = "class"
     linear_model.hparams["task_idx"] = task_idx
     
@@ -177,8 +190,11 @@ def main():
         enable_progress_bar=True
     )
     trainer.fit(linear_model,
-            train_dataloaders=train_loaders[f"task{task_idx}"],
-            val_dataloaders=val_loader) 
+                train_dataloaders=train_loaders[f"task{task_idx}"],
+                val_dataloaders=val_loader)
+
+    # 過去タスクも含めた累積評価
+    linear_model.evaluate_past_tasks()
 
     # -----------------------------
     # checkpoint保存 & last_checkpoint.txt 更新
