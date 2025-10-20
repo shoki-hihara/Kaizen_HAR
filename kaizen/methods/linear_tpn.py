@@ -214,6 +214,7 @@ class LinearTPNModel(pl.LightningModule):
         """過去タスクも含めた累積評価"""
         if not self.past_task_loaders:
             return
+    
         all_logs = {}
         for task_idx, loader in enumerate(self.past_task_loaders):
             preds_list, targets_list = [], []
@@ -226,4 +227,10 @@ class LinearTPNModel(pl.LightningModule):
             mask_correct = preds == targets
             correct_task = mask_correct.sum() / len(targets)
             all_logs[f"val_acc1_task{task_idx}"] = correct_task
-        self.log_dict(all_logs, sync_dist=True)
+    
+        # Lightning の self.log_dict の代わりに wandb.log
+        # step をタスク番号にすると可視化が整理されやすい
+        wandb.log(all_logs, step=getattr(self, "current_task", 0))
+    
+        # 確認用に標準出力も残す
+        print(f"[INFO] Past task evaluation logs: {all_logs}")
