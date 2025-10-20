@@ -97,7 +97,11 @@ def main():
     # モデル構築（HAR用 LinearTPN）
     # -----------------------------
     # backbone は既存の TPNLightning を使用
-    backbone = TPNLightning(in_channels=3, feature_dim=getattr(args, "feature_dim", 128), extractor=True)
+    backbone = TPNLightning(
+                                in_channels=3,
+                                feature_dim=getattr(args, "feature_dim", 128),
+                                extractor=True
+                            )
 
     # LinearTPNModel で classifier 18クラス対応
     args_dict = vars(args).copy()
