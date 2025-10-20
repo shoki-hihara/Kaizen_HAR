@@ -136,6 +136,10 @@ def main():
         **args_dict
     )
 
+    linear_model.hparams["tasks"] = tasks        # map_labels_to_tasks() で取得
+    linear_model.hparams["split_strategy"] = "class"
+    linear_model.hparams["task_idx"] = task_idx
+    
     callbacks = []
     wandb_logger = None
     if args.wandb:
