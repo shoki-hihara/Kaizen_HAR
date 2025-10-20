@@ -173,14 +173,14 @@ class LinearTPNModel(pl.LightningModule):
         return results
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
-        # 現タスクの評価
+        """現タスク + 過去タスクの累積評価"""
+        # --- 現タスク ---
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
         log = {"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5}
     
         if not self.trainer.sanity_checking:
-            # 現タスクのタスク別精度
             preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
             targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
             mask_correct = preds == targets
@@ -188,20 +188,33 @@ class LinearTPNModel(pl.LightningModule):
             split_strategy = self.hparams.get("split_strategy", "class")
             tasks = self.hparams.get("tasks", None)
     
+            # --- 現タスクのタスク別精度 ---
             if split_strategy == "class" and tasks is not None:
                 for task_idx, task in enumerate(tasks):
                     mask_task = np.isin(targets, np.array(task))
                     correct_task = np.logical_and(mask_task, mask_correct).sum()
                     log[f"val_acc1_task{task_idx}"] = correct_task / mask_task.sum()
     
-            # 過去タスクの累積評価
+            # --- 過去タスク累積評価 ---
             if self.past_task_loaders:
+                current_task_idx = getattr(self.hparams, "task_idx", 0)
                 for task_idx, loader in enumerate(self.past_task_loaders):
+                    if task_idx >= current_task_idx:
+                        continue  # 未学習タスクはスキップ
+    
                     preds_list, targets_list = [], []
-                    for batch in loader:
-                        _, _, _, _, logits = self.shared_step(batch, 0)
-                        preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                        targets_list.append(batch[-1].cpu().numpy())
+                    try:
+                        for batch in loader:
+                            _, _, _, _, logits = self.shared_step(batch, 0)
+                            preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                            targets_list.append(batch[-1].cpu().numpy())
+                    except Exception as e:
+                        print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
+                        continue
+    
+                    if len(preds_list) == 0:
+                        continue
+    
                     preds_past = np.concatenate(preds_list)
                     targets_past = np.concatenate(targets_list)
                     cum_acc = (preds_past == targets_past).sum() / len(targets_past)
