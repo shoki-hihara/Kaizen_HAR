@@ -97,19 +97,30 @@ def main():
     # モデル構築（HAR用 LinearTPN）
     # -----------------------------
     # backbone は既存の TPNLightning を使用
-    backbone = TPNLightning(in_channels=3, feature_dim=getattr(args, "feature_dim", 128))
+    backbone = TPNLightning(in_channels=3, feature_dim=getattr(args, "feature_dim", 128), extractor=True)
 
     # LinearTPNModel で classifier 18クラス対応
     args_dict = vars(args).copy()
     args_dict.pop("num_classes", None)
-    model = LinearTPNModel(backbone=backbone, num_classes=18, **args_dict)
+    model = LinearTPNModel(
+                                backbone=backbone,
+                                num_classes=18,
+                                eval_linear=True,
+                                **args_dict
+                            )
 
     # Checkpoint 継続読み込み
-    last_ckpt_path = os.path.join(args.checkpoint_dir, "last.ckpt")
-    if args.task_idx != 0 and os.path.exists(last_ckpt_path):
-        print(f"[INFO] Loading checkpoint from {last_ckpt_path}")
-        ckpt = torch.load(last_ckpt_path, map_location="cpu")
-        model.load_state_dict(ckpt["state_dict"], strict=False)
+    current_ckpt = os.path.join(args.checkpoint_dir, f"task{args.task_idx}_last.ckpt")
+    
+    if args.task_idx != 0:
+        prev_ckpt = os.path.join(args.checkpoint_dir, f"task{args.task_idx - 1}_last.ckpt")
+        if os.path.exists(prev_ckpt):
+            print(f"[INFO] Loading checkpoint from {prev_ckpt}")
+            ckpt = torch.load(prev_ckpt, map_location="cpu")
+            model.load_state_dict(ckpt["state_dict"], strict=False)
+        else:
+            print(f"[WARN] Previous checkpoint not found for task {args.task_idx - 1}, starting fresh.")
+
 
     # WandB ロガー
     callbacks = []
@@ -120,6 +131,7 @@ def main():
             project=args.project,
             entity=args.entity,
             offline=args.offline,
+            mode="offline" if args.offline else "online",
             reinit=True,
         )
         wandb_logger.watch(model, log="all", log_freq=100)
@@ -159,9 +171,10 @@ def main():
     )
 
     # Checkpoint 保存
+    exp_dir = args.checkpoint_dir
     if args.save_checkpoint:
-        trainer.save_checkpoint(last_ckpt_path)
-        print(f"[INFO] Saved checkpoint to {last_ckpt_path}")
+        trainer.save_checkpoint(current_ckpt)
+        print(f"[INFO] Saved checkpoint to {current_ckpt}")
 
         with open(os.path.join(exp_dir, "args.json"), "w") as f:
             json.dump(
