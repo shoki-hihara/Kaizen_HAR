@@ -99,13 +99,20 @@ def main():
     # 過去タスクの DataLoader を収集（累積評価用）
     past_task_loaders = []
     for past_idx in range(task_idx):
+        # 過去タスクのラベルを選択して subset 作成
+        task_labels = tasks[past_idx]
         prev_train_loader, _ = prepare_wisdm_dataloaders(
             data_dir=args.data_dir,
             batch_size=args.batch_size,
             val_ratio=0.1,
             num_workers=args.num_workers
         )
-        past_task_loaders.append(prev_train_loader)
+        # Subset で task_labels のみ抽出
+        indices = [i for i, (_, y) in enumerate(prev_train_loader.dataset) if y in task_labels]
+        if len(indices) > 0:
+            subset = Subset(prev_train_loader.dataset, indices)
+            subset_loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+            past_task_loaders.append(subset_loader)
 
     # -----------------------------
     # TPNLightning: 特徴量抽出
