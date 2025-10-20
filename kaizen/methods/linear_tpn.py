@@ -81,34 +81,32 @@ class LinearTPNModel(pl.LightningModule):
     
         if optimizer_name == "sgd":
             optimizer_cls = torch.optim.SGD
+            optimizer = optimizer_cls(
+                self.classifier.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                momentum=self.hparams.get("momentum", 0.9),
+                nesterov=self.hparams.get("nesterov", False),
+            )
         elif optimizer_name == "adam":
             optimizer_cls = torch.optim.Adam
+            optimizer = optimizer_cls(
+                self.classifier.parameters(),
+                lr=lr,
+                weight_decay=weight_decay,
+                betas=self.hparams.get("betas", (0.9, 0.999)),
+            )
         else:
             raise ValueError(f"{optimizer_name} not in (sgd, adam)")
     
-        # SGD/Adam に渡してはいけない hparams を除外
-        exclude_keys = [
-            "optimizer", "lr", "weight_decay", "dataset", "num_tasks", "task_idx",
-            "gpus", "precision", "batch_size", "num_workers", "name",
-            "project", "entity", "offline", "wandb", "save_checkpoint",
-            "checkpoint_dir",
-        ]
-        extra_optimizer_args = {k: v for k, v in self.hparams.items() if k not in exclude_keys}
-    
-        optimizer = optimizer_cls(
-            self.classifier.parameters(),
-            lr=lr,
-            weight_decay=weight_decay,
-            **extra_optimizer_args,
-        )
-    
+        # --- LARS wrapper（必要なら）---
         if self.hparams.get("lars", False):
             optimizer = LARSWrapper(
                 optimizer,
                 exclude_bias_n_norm=self.hparams.get("exclude_bias_n_norm", False),
             )
     
-        # scheduler 部分は前回と同じ
+        # --- Scheduler設定 ---
         scheduler_name = self.hparams.get("scheduler", "reduce")
         max_epochs = self.hparams.get("max_epochs", 100)
         lr_decay_steps = self.hparams.get("lr_decay_steps", None)
@@ -129,11 +127,12 @@ class LinearTPNModel(pl.LightningModule):
         elif scheduler_name == "step":
             scheduler = MultiStepLR(optimizer, lr_decay_steps, gamma=0.1)
         elif scheduler_name == "exponential":
-            scheduler = ExponentialLR(optimizer, weight_decay)
+            scheduler = ExponentialLR(optimizer, 0.95)
         else:
             raise ValueError(f"{scheduler_name} not supported")
     
         return [optimizer], [scheduler]
+
 
 
     def shared_step(self, batch: Tuple, batch_idx: int):
