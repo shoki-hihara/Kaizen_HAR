@@ -1,4 +1,4 @@
-# main_pretrain.py（Subset対応 & checkpoint安定化版）
+# main_pretrain.py（修正版：タスク別hparamsと安全なwandb初期化）
 import os
 import json
 import random
@@ -34,7 +34,7 @@ def map_labels_to_tasks():
     return task_classes, label_to_task
 
 # -----------------------------
-# データローダ準備（リプレイ含む）
+# データローダ準備
 # -----------------------------
 def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
     train_loader, val_loader = prepare_wisdm_dataloaders(
@@ -46,7 +46,6 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
 
     loaders = {f"task{task_idx}": train_loader}
 
-    # replay 用データセット
     if replay and task_idx != 0:
         replay_size = max(1, int(len(train_loader.dataset) * replay_proportion))
         indices = np.random.choice(len(train_loader.dataset), replay_size, replace=False)
@@ -76,16 +75,14 @@ def main():
     set_seed(SEED)
     seed_everything(SEED)
 
-    # checkpoint_dir の存在確認
     if not hasattr(args, "checkpoint_dir") or args.checkpoint_dir is None:
         raise ValueError("checkpoint_dir must be provided")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-    # タスク設定
     tasks, label_to_task = map_labels_to_tasks()
     task_idx = getattr(args, "task_idx", 0)
 
-    # データ準備
+    # --- 各タスクごとのデータ準備 ---
     train_loaders, val_loader, current_train_loader = prepare_task_datasets(
         data_dir=args.data_dir,
         task_idx=task_idx,
@@ -96,31 +93,24 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
-    # 過去タスクの DataLoader を収集（累積評価用）
+    # --- 過去タスクローダ ---
     past_task_loaders = []
     for past_idx in range(task_idx):
-        task_labels = tasks[past_idx]  # 過去タスクのラベル
-    
-        # 全データ取得
+        task_labels = tasks[past_idx]
         prev_train_loader, _ = prepare_wisdm_dataloaders(
             data_dir=args.data_dir,
             batch_size=args.batch_size,
             val_ratio=0.1,
             num_workers=args.num_workers
         )
-    
-        # task_labels のみ subset 抽出
         indices = [i for i, (_, y) in enumerate(prev_train_loader.dataset) if y in task_labels]
         if len(indices) == 0:
             continue
-    
         subset = Subset(prev_train_loader.dataset, indices)
         loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
         past_task_loaders.append(loader)
 
-    # -----------------------------
-    # TPNLightning: 特徴量抽出
-    # -----------------------------
+    # --- TPN 学習 ---
     backbone = TPNLightning(
         in_channels=3,
         feature_dim=getattr(args, "feature_dim", 128),
@@ -147,19 +137,18 @@ def main():
     tpn_trainer.save_checkpoint(current_tpn_ckpt)
     print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
 
-    # -----------------------------
-    # LinearTPN: 簡易評価
-    # -----------------------------
+    # --- LinearTPN 評価 ---
     args_dict = vars(args).copy()
     args_dict.pop("num_classes", None)
     linear_model = LinearTPNModel(
         backbone=backbone,
         num_classes=18,
-        past_task_loaders=past_task_loaders,  # 過去タスク DataLoader を渡す
+        past_task_loaders=past_task_loaders,
         **args_dict
     )
 
-    linear_model.hparams["tasks"] = tasks
+    # ✅ 修正ポイント: 現タスクまでを渡す
+    linear_model.hparams["tasks"] = tasks[:task_idx+1]
     linear_model.hparams["split_strategy"] = "class"
     linear_model.hparams["task_idx"] = task_idx
 
@@ -167,17 +156,15 @@ def main():
     wandb_logger = None
     if args.wandb:
         wandb_logger = WandbLogger(
-            name=f"{args.name}_task{task_idx}",
+            name=f"{args.name}_task{task_idx}_seed{SEED}",
             project=args.project,
             entity=args.entity,
-            offline=args.offline,
             mode="offline" if args.offline else "online",
             reinit=True,
         )
         wandb_logger.watch(linear_model, log="all", log_freq=100)
         callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
-    linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
     if args.save_checkpoint:
         checkpoint_callback = ModelCheckpoint(
             dirpath=args.checkpoint_dir,
@@ -199,32 +186,28 @@ def main():
         log_every_n_steps=10,
         enable_progress_bar=True
     )
-    trainer.fit(linear_model,
-                train_dataloaders=train_loaders[f"task{task_idx}"],
-                val_dataloaders=val_loader)
+    trainer.fit(
+        linear_model,
+        train_dataloaders=train_loaders[f"task{task_idx}"],
+        val_dataloaders=val_loader
+    )
 
-    # -----------------------------
-    # 過去タスク累積評価
-    # -----------------------------
-    if linear_model.past_task_loaders:
+    # --- 過去タスク評価（安全実行） ---
+    if hasattr(linear_model, "evaluate_past_tasks") and linear_model.past_task_loaders:
         print(f"[INFO] Evaluating past tasks for Task {task_idx}")
-        linear_model.evaluate_past_tasks()
+        try:
+            linear_model.evaluate_past_tasks()
+        except Exception as e:
+            print(f"[WARN] Past task evaluation skipped due to error: {e}")
 
-    # -----------------------------
-    # checkpoint保存 & last_checkpoint.txt 更新
-    # -----------------------------
+    # --- チェックポイント保存 ---
     if args.save_checkpoint:
-        os.makedirs(args.checkpoint_dir, exist_ok=True)
+        linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
         trainer.save_checkpoint(linear_ckpt)
         print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
 
-        # last_checkpoint.txt 保存
-        last_ckpt_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
-        with open(last_ckpt_txt, "w") as f:
+        with open(os.path.join(args.checkpoint_dir, "last_checkpoint.txt"), "w") as f:
             f.write(linear_ckpt)
-        print(f"[INFO] Updated last_checkpoint.txt at {last_ckpt_txt}")
-
-        # args.json 保存
         with open(os.path.join(args.checkpoint_dir, "args.json"), "w") as f:
             json.dump(
                 {k: str(v) if isinstance(v, (Path, PosixPath)) else v for k, v in vars(args).items()},
