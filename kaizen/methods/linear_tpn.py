@@ -190,10 +190,19 @@ class LinearTPNModel(pl.LightningModule):
     
             # --- 現タスクのタスク別精度 ---
             if split_strategy == "class" and tasks is not None:
+                current_task_idx = getattr(self.hparams, "task_idx", 0)
                 for task_idx, task in enumerate(tasks):
+                    # 未学習タスクはスキップ
+                    if task_idx > current_task_idx:
+                        continue
+            
                     mask_task = np.isin(targets, np.array(task))
+                    if mask_task.sum() == 0:
+                        continue
+            
                     correct_task = np.logical_and(mask_task, mask_correct).sum()
-                    log[f"val_acc1_task{task_idx}"] = correct_task / mask_task.sum()
+                    acc_task = correct_task / mask_task.sum()
+                    log[f"val_acc1_task{task_idx}"] = acc_task
     
             # --- 過去タスク累積評価 ---
             if self.past_task_loaders:
