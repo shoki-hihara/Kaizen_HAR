@@ -10,7 +10,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from kaizen.methods.linear_tpn import LinearTPNModel
-from kaizen.methods import TPNLightning  # backbone 用
+from kaizen.methods import TPNLightning
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
 
@@ -67,13 +67,18 @@ def set_seed(seed=5):
     torch.backends.cudnn.benchmark = False
 
 # -----------------------------
-# タスクループ実行
+# メイン処理
 # -----------------------------
 def main():
     args = parse_args_pretrain()
     SEED = getattr(args, "global_seed", 5)
     set_seed(SEED)
     seed_everything(SEED)
+
+    # checkpoint_dir の存在を確認
+    if not hasattr(args, "checkpoint_dir") or args.checkpoint_dir is None:
+        raise ValueError("checkpoint_dir must be provided by job_launcher.py")
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # タスク設定
     tasks, label_to_task = map_labels_to_tasks()
@@ -82,7 +87,7 @@ def main():
     backbone = TPNLightning(
         in_channels=3,
         feature_dim=getattr(args, "feature_dim", 128),
-        num_classes=18,  # dummy
+        num_classes=18,
         lr=args.lr if hasattr(args, "lr") else 1e-3
     )
 
@@ -101,32 +106,40 @@ def main():
             replay_proportion=args.replay_proportion
         )
 
-        # LinearTPN モデル構築（簡易評価用）
+        # -----------------------------
+        # TPNLightning: 特徴量抽出
+        # -----------------------------
+        current_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_tpn.ckpt")
+        if task_idx != 0:
+            prev_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx-1}_tpn.ckpt")
+            if os.path.exists(prev_tpn_ckpt):
+                print(f"[INFO] Loading TPNLightning checkpoint from {prev_tpn_ckpt}")
+                backbone.load_state_dict(torch.load(prev_tpn_ckpt, map_location="cpu")["state_dict"])
+            else:
+                print(f"[WARN] Previous TPN checkpoint not found, starting fresh.")
+
+        tpn_trainer = Trainer(
+            max_epochs=args.max_epochs,
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1 if torch.cuda.is_available() else None,
+            precision=args.precision if torch.cuda.is_available() else 32
+        )
+        tpn_trainer.fit(backbone, train_dataloaders=train_loaders[f"task{task_idx}"])
+        tpn_trainer.save_checkpoint(current_tpn_ckpt)
+        print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
+
+        # -----------------------------
+        # LinearTPN: 簡易評価
+        # -----------------------------
         args_dict = vars(args).copy()
         args_dict.pop("num_classes", None)
-        model = LinearTPNModel(
+        linear_model = LinearTPNModel(
             backbone=backbone,
             num_classes=18,
             eval_linear=True,
             **args_dict
         )
 
-        # -----------------------------
-        # 前タスクの重みを引き継ぎ
-        # -----------------------------
-        current_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
-        if task_idx != 0:
-            prev_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx - 1}_last.ckpt")
-            if os.path.exists(prev_ckpt):
-                print(f"[INFO] Loading checkpoint from {prev_ckpt}")
-                ckpt = torch.load(prev_ckpt, map_location="cpu")
-                model.load_state_dict(ckpt["state_dict"], strict=False)
-            else:
-                print(f"[WARN] Previous checkpoint not found for task {task_idx - 1}, starting fresh.")
-
-        # -----------------------------
-        # WandB ロガー
-        # -----------------------------
         callbacks = []
         wandb_logger = None
         if args.wandb:
@@ -138,13 +151,11 @@ def main():
                 mode="offline" if args.offline else "online",
                 reinit=True,
             )
-            wandb_logger.watch(model, log="all", log_freq=100)
+            wandb_logger.watch(linear_model, log="all", log_freq=100)
             callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
-        # -----------------------------
-        # Checkpoint コールバック
-        # -----------------------------
         if args.save_checkpoint:
+            linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
             checkpoint_callback = ModelCheckpoint(
                 dirpath=args.checkpoint_dir,
                 filename=f"task{task_idx}_last",
@@ -155,41 +166,28 @@ def main():
             )
             callbacks.append(checkpoint_callback)
 
-        # -----------------------------
-        # Trainer 設定
-        # -----------------------------
-        accelerator = "gpu" if torch.cuda.is_available() else "cpu"
-        devices = 1 if accelerator == "gpu" else None
-        precision = args.precision if accelerator == "gpu" else 32
-
         trainer = Trainer(
             max_epochs=args.max_epochs,
-            accelerator=accelerator,
-            devices=devices,
-            precision=precision,
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1 if torch.cuda.is_available() else None,
+            precision=args.precision if torch.cuda.is_available() else 32,
             callbacks=callbacks,
-            logger=wandb_logger,
+            logger=wandb_logger
         )
 
-        # -----------------------------
-        # 学習開始（特徴量抽出 + LinearTPN）
-        # -----------------------------
-        trainer.fit(
-            model,
-            train_dataloaders=train_loaders[f"task{task_idx}"]
-        )
+        trainer.fit(linear_model, train_dataloaders=train_loaders[f"task{task_idx}"])
 
         # -----------------------------
         # checkpoint保存 & last_checkpoint.txt 更新
         # -----------------------------
         if args.save_checkpoint:
             os.makedirs(args.checkpoint_dir, exist_ok=True)
-            trainer.save_checkpoint(current_ckpt)
-            print(f"[INFO] Saved checkpoint to {current_ckpt}")
+            trainer.save_checkpoint(linear_ckpt)
+            print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
 
             last_ckpt_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
             with open(last_ckpt_txt, "w") as f:
-                f.write(current_ckpt)
+                f.write(linear_ckpt)
             print(f"[INFO] Updated last_checkpoint.txt at {last_ckpt_txt}")
 
             # args.json 保存
