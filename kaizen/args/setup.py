@@ -102,7 +102,7 @@ def parse_args_linear() -> argparse.Namespace:
     parser = pl.Trainer.add_argparse_args(parser)
 
     # linear model
-    parser = METHODS["linear"].add_model_specific_args(parser)
+    parser = METHODS["linear_tpn"].add_model_specific_args(parser)
 
     # THIS LINE IS KEY TO PULL WANDB
     temp_args, _ = parser.parse_known_args()
