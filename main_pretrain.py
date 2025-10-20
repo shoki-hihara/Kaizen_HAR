@@ -1,3 +1,5 @@
+# main_pretrain.py (修正版)
+
 import os
 import json
 import random
@@ -84,7 +86,20 @@ def main():
     tasks, label_to_task = map_labels_to_tasks()
     task_idx = getattr(args, "task_idx", 0)
 
-    # データ準備
+    # 過去タスク用データローダを保持
+    past_task_loaders = []
+    for prev_task_idx in range(task_idx):
+        prev_loaders, _ = prepare_task_datasets(
+            data_dir=args.data_dir,
+            task_idx=prev_task_idx,
+            tasks=tasks,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            replay=False
+        )
+        past_task_loaders.append(prev_loaders[f"task{prev_task_idx}"])
+
+    # データ準備（現在タスク）
     train_loaders, val_loader = prepare_task_datasets(
         data_dir=args.data_dir,
         task_idx=task_idx,
@@ -94,18 +109,6 @@ def main():
         replay=args.replay,
         replay_proportion=args.replay_proportion
     )
-
-    # 過去タスクの val loader 収集（累積評価用）
-    past_task_loaders = []
-    for t in range(task_idx):
-        _, past_val_loader = prepare_task_datasets(
-            data_dir=args.data_dir,
-            task_idx=t,
-            tasks=tasks,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers
-        )
-        past_task_loaders.append(past_val_loader)
 
     # -----------------------------
     # TPNLightning: 特徴量抽出
@@ -137,22 +140,21 @@ def main():
     print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
 
     # -----------------------------
-    # LinearTPN: 簡易評価
+    # LinearTPN: 簡易評価 + 過去タスク累積評価
     # -----------------------------
     args_dict = vars(args).copy()
     args_dict.pop("num_classes", None)
     linear_model = LinearTPNModel(
         backbone=backbone,
         num_classes=18,
-        past_task_loaders=past_task_loaders,  # ここで渡す
-        eval_linear=True,
+        past_task_loaders=past_task_loaders,
         **args_dict
     )
 
     linear_model.hparams["tasks"] = tasks
     linear_model.hparams["split_strategy"] = "class"
     linear_model.hparams["task_idx"] = task_idx
-    
+
     callbacks = []
     wandb_logger = None
     if args.wandb:
@@ -190,10 +192,12 @@ def main():
         enable_progress_bar=True
     )
     trainer.fit(linear_model,
-                train_dataloaders=train_loaders[f"task{task_idx}"],
-                val_dataloaders=val_loader)
+            train_dataloaders=train_loaders[f"task{task_idx}"],
+            val_dataloaders=val_loader) 
 
-    # 過去タスクも含めた累積評価
+    # -----------------------------
+    # 過去タスクを含めた累積評価
+    # -----------------------------
     linear_model.evaluate_past_tasks()
 
     # -----------------------------
