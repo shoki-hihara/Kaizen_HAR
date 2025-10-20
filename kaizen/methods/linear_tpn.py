@@ -211,26 +211,37 @@ class LinearTPNModel(pl.LightningModule):
 
 
     def evaluate_past_tasks(self):
-        """過去タスクも含めた累積評価"""
+        """過去タスクも含めた累積評価（未学習タスクはスキップ）"""
         if not self.past_task_loaders:
             return
     
         all_logs = {}
+        current_task_idx = getattr(self, "hparams", {}).get("task_idx", 0)
+    
         for task_idx, loader in enumerate(self.past_task_loaders):
+            # 未学習タスクはスキップ
+            if task_idx >= current_task_idx:
+                continue
+    
             preds_list, targets_list = [], []
-            for batch in loader:
-                _, _, _, _, logits = self.shared_step(batch, 0)
-                preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                targets_list.append(batch[-1].cpu().numpy())
+            try:
+                for batch in loader:
+                    _, _, _, _, logits = self.shared_step(batch, 0)
+                    preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                    targets_list.append(batch[-1].cpu().numpy())
+            except Exception as e:
+                print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
+                continue
+    
+            if len(preds_list) == 0:
+                continue
+    
             preds = np.concatenate(preds_list)
             targets = np.concatenate(targets_list)
-            mask_correct = preds == targets
-            correct_task = mask_correct.sum() / len(targets)
+            correct_task = (preds == targets).sum() / len(targets)
             all_logs[f"val_acc1_task{task_idx}"] = correct_task
     
-        # Lightning の self.log_dict の代わりに wandb.log
-        # step をタスク番号にすると可視化が整理されやすい
-        wandb.log(all_logs, step=getattr(self, "current_task", 0))
-    
-        # 確認用に標準出力も残す
-        print(f"[INFO] Past task evaluation logs: {all_logs}")
+        if all_logs:
+            import wandb
+            wandb.log(all_logs, step=current_task_idx)
+            print(f"[INFO] Past task evaluation logs: {all_logs}")
