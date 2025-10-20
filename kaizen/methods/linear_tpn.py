@@ -194,3 +194,18 @@ class LinearTPNModel(pl.LightningModule):
                     log[f"val_acc1_{domain}_{task_idx}"] = correct_domain / mask_domain.sum()
 
         self.log_dict(log, sync_dist=True)
+
+    def online_eval_epoch_end(self, outs: List[Dict[str, Any]]):
+        preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
+        targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
+        mask_correct = preds == targets
+    
+        log = {}
+        tasks = self.hparams.get("tasks", None)
+        if tasks is not None:
+            for task_idx, task in enumerate(tasks):
+                mask_task = np.isin(targets, np.array(task))
+                correct_task = np.logical_and(mask_task, mask_correct).sum()
+                log[f"val_online_eval_acc1_task{task_idx}"] = correct_task / mask_task.sum()
+    
+        self.log_dict(log, sync_dist=True)
