@@ -1,4 +1,4 @@
-# main_pretrain.py（Kaizenオリジナル再現版）
+# main_pretrain.py（Subset対応 & checkpoint安定化版）
 import os
 import json
 import random
@@ -96,19 +96,16 @@ def main():
         replay_proportion=args.replay_proportion
     )
 
-    # 過去タスクの DataLoader を正しく作成（累積評価用）
+    # 過去タスクの DataLoader を収集（累積評価用）
     past_task_loaders = []
     for past_idx in range(task_idx):
-        past_labels = tasks[past_idx]
-        past_indices = [i for i, t in enumerate(current_train_loader.dataset.targets) if t in past_labels]
-        past_dataset = Subset(current_train_loader.dataset, past_indices)
-        past_loader = DataLoader(
-            past_dataset,
+        prev_train_loader, _ = prepare_wisdm_dataloaders(
+            data_dir=args.data_dir,
             batch_size=args.batch_size,
-            shuffle=False,  # 評価用は shuffle=False
+            val_ratio=0.1,
             num_workers=args.num_workers
         )
-        past_task_loaders.append(past_loader)
+        past_task_loaders.append(prev_train_loader)
 
     # -----------------------------
     # TPNLightning: 特徴量抽出
@@ -147,7 +144,7 @@ def main():
     linear_model = LinearTPNModel(
         backbone=backbone,
         num_classes=18,
-        past_task_loaders=past_task_loaders,
+        past_task_loaders=past_task_loaders,  # 過去タスク DataLoader を渡す
         **args_dict
     )
 
@@ -196,7 +193,7 @@ def main():
                 val_dataloaders=val_loader)
 
     # -----------------------------
-    # 過去タスク累積評価（補助）
+    # 過去タスク累積評価
     # -----------------------------
     if linear_model.past_task_loaders:
         print(f"[INFO] Evaluating past tasks for Task {task_idx}")
@@ -210,6 +207,7 @@ def main():
         trainer.save_checkpoint(linear_ckpt)
         print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
 
+        # last_checkpoint.txt 保存
         last_ckpt_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
         with open(last_ckpt_txt, "w") as f:
             f.write(linear_ckpt)
