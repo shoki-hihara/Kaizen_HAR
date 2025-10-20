@@ -4,6 +4,7 @@ import json
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Subset
+from pathlib import Path, PosixPath
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
@@ -12,7 +13,6 @@ from kaizen.methods.linear_tpn import LinearTPNModel
 from kaizen.methods import TPNLightning  # backbone 用
 from kaizen.args.setup import parse_args_pretrain
 from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
-
 
 # -----------------------------
 # タスクマッピング
@@ -31,7 +31,6 @@ def map_labels_to_tasks():
         for label in labels:
             label_to_task[label] = idx
     return task_classes, label_to_task
-
 
 # -----------------------------
 # データローダ準備（リプレイ含む）
@@ -55,7 +54,6 @@ def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=
 
     return loaders, val_loader
 
-
 # -----------------------------
 # 再現性の確保
 # -----------------------------
@@ -66,7 +64,6 @@ def set_seed(seed=5):
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-
 
 # -----------------------------
 # メイン処理
@@ -94,28 +91,31 @@ def main():
     print(f"[INFO] Loaded train loaders: {[len(dl.dataset) for dl in train_loaders.values()]}")
 
     # -----------------------------
-    # モデル構築（HAR用 LinearTPN）
+    # モデル構築（TPNLightning で特徴量抽出）
     # -----------------------------
-    # backbone は既存の TPNLightning を使用
     backbone = TPNLightning(
-                                in_channels=3,
-                                feature_dim=getattr(args, "feature_dim", 128),
-                                extractor=True
-                            )
+        in_channels=3,
+        feature_dim=getattr(args, "feature_dim", 128),
+        num_classes=18,  # dummy
+        lr=args.lr if hasattr(args, "lr") else 1e-3
+    )
 
-    # LinearTPNModel で classifier 18クラス対応
+    # -----------------------------
+    # LinearTPNModel で線形分類器の簡易評価
+    # -----------------------------
     args_dict = vars(args).copy()
     args_dict.pop("num_classes", None)
     model = LinearTPNModel(
-                                backbone=backbone,
-                                num_classes=18,
-                                eval_linear=True,
-                                **args_dict
-                            )
+        backbone=backbone,
+        num_classes=18,
+        eval_linear=True,
+        **args_dict
+    )
 
-    # Checkpoint 継続読み込み
+    # -----------------------------
+    # Checkpoint 継続読み込み（task0以外）
+    # -----------------------------
     current_ckpt = os.path.join(args.checkpoint_dir, f"task{args.task_idx}_last.ckpt")
-    
     if args.task_idx != 0:
         prev_ckpt = os.path.join(args.checkpoint_dir, f"task{args.task_idx - 1}_last.ckpt")
         if os.path.exists(prev_ckpt):
@@ -125,8 +125,9 @@ def main():
         else:
             print(f"[WARN] Previous checkpoint not found for task {args.task_idx - 1}, starting fresh.")
 
-
+    # -----------------------------
     # WandB ロガー
+    # -----------------------------
     callbacks = []
     wandb_logger = None
     if args.wandb:
@@ -141,7 +142,9 @@ def main():
         wandb_logger.watch(model, log="all", log_freq=100)
         callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
+    # -----------------------------
     # Checkpoint コールバック
+    # -----------------------------
     checkpoint_callback = None
     if args.save_checkpoint:
         checkpoint_callback = ModelCheckpoint(
@@ -154,7 +157,9 @@ def main():
         )
         callbacks.append(checkpoint_callback)
 
-    # GPU設定
+    # -----------------------------
+    # Trainer 設定
+    # -----------------------------
     accelerator = "gpu" if torch.cuda.is_available() else "cpu"
     devices = 1 if accelerator == "gpu" else None
     precision = args.precision if accelerator == "gpu" else 32
@@ -168,19 +173,30 @@ def main():
         logger=wandb_logger,
     )
 
-    # 学習開始
+    # -----------------------------
+    # 学習開始（特徴量抽出 + LinearTPN）
+    # -----------------------------
     trainer.fit(
         model,
         train_dataloaders=train_loaders[f"task{args.task_idx}"]
     )
 
-    # Checkpoint 保存
-    exp_dir = args.checkpoint_dir
+    # -----------------------------
+    # checkpoint保存
+    # -----------------------------
     if args.save_checkpoint:
+        os.makedirs(args.checkpoint_dir, exist_ok=True)
         trainer.save_checkpoint(current_ckpt)
         print(f"[INFO] Saved checkpoint to {current_ckpt}")
 
-        with open(os.path.join(exp_dir, "args.json"), "w") as f:
+        # last_checkpoint.txt 作成
+        last_ckpt_txt = os.path.join(args.checkpoint_dir, "last_checkpoint.txt")
+        with open(last_ckpt_txt, "w") as f:
+            f.write(current_ckpt)
+        print(f"[INFO] Created last_checkpoint.txt at {last_ckpt_txt}")
+
+        # args.json 保存
+        with open(os.path.join(args.checkpoint_dir, "args.json"), "w") as f:
             json.dump(
                 {k: str(v) if isinstance(v, (Path, PosixPath)) else v for k, v in vars(args).items()},
                 f,
