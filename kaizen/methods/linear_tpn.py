@@ -168,34 +168,42 @@ class LinearTPNModel(pl.LightningModule):
         return results
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
+        # 現タスクの評価
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
         log = {"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5}
-
+    
         if not self.trainer.sanity_checking:
+            # 現タスクのタスク別精度
             preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
             targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
             mask_correct = preds == targets
-
+    
             split_strategy = self.hparams.get("split_strategy", "class")
             tasks = self.hparams.get("tasks", None)
-
+    
             if split_strategy == "class" and tasks is not None:
                 for task_idx, task in enumerate(tasks):
                     mask_task = np.isin(targets, np.array(task))
                     correct_task = np.logical_and(mask_task, mask_correct).sum()
                     log[f"val_acc1_task{task_idx}"] = correct_task / mask_task.sum()
-
-            if split_strategy == "domain":
-                domains_list = [o["domains"] for o in outs]
-                domains_list = np.array(functools.reduce(operator.iconcat, domains_list, []))
-                for task_idx, domain in enumerate(self.domains):
-                    mask_domain = np.isin(domains_list, np.array([domain]))
-                    correct_domain = np.logical_and(mask_domain, mask_correct).sum()
-                    log[f"val_acc1_{domain}_{task_idx}"] = correct_domain / mask_domain.sum()
-
+    
+            # 過去タスクの累積評価
+            if self.past_task_loaders:
+                for task_idx, loader in enumerate(self.past_task_loaders):
+                    preds_list, targets_list = [], []
+                    for batch in loader:
+                        _, _, _, _, logits = self.shared_step(batch, 0)
+                        preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                        targets_list.append(batch[-1].cpu().numpy())
+                    preds_past = np.concatenate(preds_list)
+                    targets_past = np.concatenate(targets_list)
+                    cum_acc = (preds_past == targets_past).sum() / len(targets_past)
+                    log[f"cum_acc_task{task_idx}"] = cum_acc
+    
         self.log_dict(log, sync_dist=True)
+
 
     def evaluate_past_tasks(self):
         """過去タスクも含めた累積評価"""
