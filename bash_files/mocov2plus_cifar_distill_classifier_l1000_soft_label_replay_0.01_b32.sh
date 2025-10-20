@@ -3,7 +3,7 @@ python3 main_continual.py \
     --encoder tpn \
     --data_dir $DATA_DIR \
     --split_strategy class \
-    --max_epochs 2 \
+    --max_epochs 200 \
     --num_tasks 6 \
     --task_idx 0 \
     --gpus 0 \
