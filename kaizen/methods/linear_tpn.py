@@ -262,10 +262,19 @@ class LinearTPNModel(pl.LightningModule):
     
         # --- CSVに保存 ---
         if all_logs:
-            import pandas as pd, os
+            import pandas as pd, os, wandb
             df = pd.DataFrame(all_logs)
             save_dir = self.logger.log_dir if self.logger else "./"
             os.makedirs(save_dir, exist_ok=True)
-            csv_path = os.path.join(save_dir, f"evaluate_past_tasks.csv")
+            csv_path = os.path.join(save_dir, "evaluate_past_tasks.csv")
             df.to_csv(csv_path, index=False)
             print(f"[INFO] Saved evaluation results to {csv_path}")
+
+            # --- WandB summary（＝Runs Table）に反映 ---
+            if wandb.run is not None:
+                for record in all_logs:
+                    task_idx = record["task_idx"]
+                    acc = record["val_acc1"]
+                    wandb.run.summary[f"val_acc1_task{task_idx}"] = acc
+                    wandb.run.summary[f"cum_acc_task{task_idx}"] = acc
+                print("[INFO] WandB summary updated — values will appear in Runs Table.")
