@@ -268,15 +268,17 @@ class LinearTPNModel(pl.LightningModule):
             preds = np.concatenate(preds_list)
             targets = np.concatenate(targets_list)
             acc = (preds == targets).sum() / len(targets)
-            all_logs[f"val_acc1_task{task_idx}"] = acc
-    
-            # ローカル出力
+            
+            # --- ローカル出力 ---
             print(f"[INFO] Validation accuracy for Task {task_idx}: {acc:.4f}")
-            self.log(f"cum_acc_task{task_idx}", acc, on_epoch=True, sync_dist=True)
     
-        # wandbにまとめて記録
+            # --- Lightning Logger にも記録 ---
+            all_logs[f"val_acc1_task{task_idx}"] = float(acc)
+            self.log(f"val_acc1_task{task_idx}", float(acc), on_epoch=True, sync_dist=True)
+            self.log(f"cum_acc_task{task_idx}", float(acc), on_epoch=True, sync_dist=True)
+    
+        # --- WandB でもまとめて記録（必要なら） ---
         if all_logs:
             import wandb
             wandb.log(all_logs)
             print(f"[INFO] Past task evaluation logs: {all_logs}")
-            print(f"[INFO] Past task results: {results}")
