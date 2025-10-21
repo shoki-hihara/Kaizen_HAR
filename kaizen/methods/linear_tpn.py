@@ -235,7 +235,7 @@ class LinearTPNModel(pl.LightningModule):
                 log[f"cum_acc_task{task_idx}"] = float(cum_acc)
     
         # --- WandB出力 ---
-        self.log_dict(log, sync_dist=True)
+        self.log_dict(log, on_epoch=True, sync_dist=True)
     
     
     def evaluate_past_tasks(self):
@@ -272,7 +272,7 @@ class LinearTPNModel(pl.LightningModule):
     
             # ローカル出力
             print(f"[INFO] Validation accuracy for Task {task_idx}: {acc:.4f}")
-            self.log(f"cum_acc_task{task_idx}", acc, sync_dist=True)
+            self.log(f"cum_acc_task{task_idx}", acc, on_epoch=True, sync_dist=True)
     
         # wandbにまとめて記録
         if all_logs:
