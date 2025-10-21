@@ -97,18 +97,19 @@ def main():
     past_task_loaders = []
     for past_idx in range(task_idx):
         task_labels = tasks[past_idx]
-        prev_train_loader, _ = prepare_wisdm_dataloaders(
+        _, prev_val_loader = prepare_wisdm_dataloaders(  # ✅ val_loaderを取得
             data_dir=args.data_dir,
             batch_size=args.batch_size,
             val_ratio=0.1,
             num_workers=args.num_workers
         )
-        indices = [i for i, (_, y) in enumerate(prev_train_loader.dataset) if y in task_labels]
+        indices = [i for i, (_, y) in enumerate(prev_val_loader.dataset) if y in task_labels]
         if len(indices) == 0:
             continue
-        subset = Subset(prev_train_loader.dataset, indices)
+        subset = Subset(prev_val_loader.dataset, indices)
         loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
         past_task_loaders.append(loader)
+
 
     # --- TPN 学習 ---
     backbone = TPNLightning(
