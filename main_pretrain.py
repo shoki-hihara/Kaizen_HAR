@@ -1,4 +1,4 @@
-# main_pretrain.py（修正版：タスク別hparamsと安全なwandb初期化）
+# main_pretrain.py（連続タスク学習対応版）
 import os
 import json
 import random
@@ -79,133 +79,137 @@ def main():
         raise ValueError("checkpoint_dir must be provided")
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
+    # --- タスク分割 ---
     tasks, label_to_task = map_labels_to_tasks()
-    task_idx = getattr(args, "task_idx", 0)
+    num_tasks = len(tasks)
 
-    # --- 各タスクごとのデータ準備 ---
-    train_loaders, val_loader, current_train_loader = prepare_task_datasets(
-        data_dir=args.data_dir,
-        task_idx=task_idx,
-        tasks=tasks,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        replay=args.replay,
-        replay_proportion=args.replay_proportion
-    )
+    print(f"[INFO] Starting continual learning for {num_tasks} tasks")
 
-    # --- 過去タスクローダ ---
-    past_task_loaders = []
-    for past_idx in range(task_idx):
-        task_labels = tasks[past_idx]
-        _, prev_val_loader = prepare_wisdm_dataloaders(  # ✅ val_loaderを取得
+    # --- 各タスクを順に学習 ---
+    for task_idx in range(num_tasks):
+        print(f"\n========== Task {task_idx} 開始 ==========")
+        # --- データローダ準備 ---
+        train_loaders, val_loader, current_train_loader = prepare_task_datasets(
             data_dir=args.data_dir,
+            task_idx=task_idx,
+            tasks=tasks,
             batch_size=args.batch_size,
-            val_ratio=0.1,
-            num_workers=args.num_workers
+            num_workers=args.num_workers,
+            replay=args.replay,
+            replay_proportion=args.replay_proportion
         )
-        indices = [i for i, (_, y) in enumerate(prev_val_loader.dataset) if y in task_labels]
-        if len(indices) == 0:
-            continue
-        subset = Subset(prev_val_loader.dataset, indices)
-        loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        past_task_loaders.append(loader)
 
+        # --- 過去タスクローダ ---
+        past_task_loaders = []
+        for past_idx in range(task_idx):
+            task_labels = tasks[past_idx]
+            _, prev_val_loader = prepare_wisdm_dataloaders(
+                data_dir=args.data_dir,
+                batch_size=args.batch_size,
+                val_ratio=0.1,
+                num_workers=args.num_workers
+            )
+            indices = [i for i, (_, y) in enumerate(prev_val_loader.dataset) if y in task_labels]
+            if len(indices) == 0:
+                continue
+            subset = Subset(prev_val_loader.dataset, indices)
+            loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+            past_task_loaders.append(loader)
 
-    # --- TPN 学習 ---
-    backbone = TPNLightning(
-        in_channels=3,
-        feature_dim=getattr(args, "feature_dim", 128),
-        num_classes=18,
-        lr=args.lr if hasattr(args, "lr") else 1e-3
-    )
-
-    current_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_tpn.ckpt")
-    if task_idx != 0:
-        prev_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx-1}_tpn.ckpt")
-        if os.path.exists(prev_tpn_ckpt):
-            print(f"[INFO] Loading previous TPNLightning checkpoint from {prev_tpn_ckpt}")
-            backbone.load_state_dict(torch.load(prev_tpn_ckpt, map_location="cpu")["state_dict"])
-        else:
-            print(f"[WARN] Previous TPN checkpoint not found, starting fresh.")
-
-    tpn_trainer = Trainer(
-        max_epochs=args.max_epochs,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1 if torch.cuda.is_available() else None,
-        precision=args.precision if torch.cuda.is_available() else 32
-    )
-    tpn_trainer.fit(backbone, train_dataloaders=train_loaders[f"task{task_idx}"])
-    tpn_trainer.save_checkpoint(current_tpn_ckpt)
-    print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
-
-    # --- LinearTPN 評価 ---
-    args_dict = vars(args).copy()
-    args_dict.pop("num_classes", None)
-    linear_model = LinearTPNModel(
-        backbone=backbone,
-        num_classes=18,
-        past_task_loaders=past_task_loaders,
-        **args_dict
-    )
-
-    # ✅ 修正ポイント: 現タスクまでを渡す
-    linear_model.hparams["tasks"] = tasks[:task_idx+1]
-    linear_model.hparams["split_strategy"] = "class"
-    linear_model.hparams["task_idx"] = task_idx
-
-    callbacks = []
-    wandb_logger = None
-    if args.wandb:
-        wandb_logger = WandbLogger(
-            name=f"{args.name}_task{task_idx}_seed{SEED}",
-            project=args.project,
-            entity=args.entity,
-            mode="offline" if args.offline else "online",
-            reinit=True,
+        # --- TPN学習 ---
+        backbone = TPNLightning(
+            in_channels=3,
+            feature_dim=getattr(args, "feature_dim", 128),
+            num_classes=18,
+            lr=args.lr if hasattr(args, "lr") else 1e-3
         )
-        wandb_logger.watch(linear_model, log="all", log_freq=100)
-        callbacks.append(LearningRateMonitor(logging_interval="epoch"))
 
-    if args.save_checkpoint:
-        checkpoint_callback = ModelCheckpoint(
-            dirpath=args.checkpoint_dir,
-            filename=f"task{task_idx}_last",
-            save_last=True,
-            save_top_k=1,
-            monitor="train_loss",
-            verbose=True
+        current_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_tpn.ckpt")
+        if task_idx != 0:
+            prev_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx-1}_tpn.ckpt")
+            if os.path.exists(prev_tpn_ckpt):
+                print(f"[INFO] Loading previous TPN checkpoint from {prev_tpn_ckpt}")
+                backbone.load_state_dict(torch.load(prev_tpn_ckpt, map_location="cpu")["state_dict"])
+            else:
+                print(f"[WARN] No previous checkpoint found, training from scratch.")
+
+        tpn_trainer = Trainer(
+            max_epochs=args.max_epochs,
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1 if torch.cuda.is_available() else None,
+            precision=args.precision if torch.cuda.is_available() else 32
         )
-        callbacks.append(checkpoint_callback)
+        tpn_trainer.fit(backbone, train_dataloaders=train_loaders[f"task{task_idx}"])
+        tpn_trainer.save_checkpoint(current_tpn_ckpt)
+        print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
 
-    trainer = Trainer(
-        max_epochs=args.max_epochs,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1 if torch.cuda.is_available() else None,
-        precision=args.precision if torch.cuda.is_available() else 32,
-        callbacks=callbacks,
-        logger=wandb_logger,
-        log_every_n_steps=10,
-        enable_progress_bar=True
-    )
-    trainer.fit(
-        linear_model,
-        train_dataloaders=train_loaders[f"task{task_idx}"],
-        val_dataloaders=val_loader
-    )
+        # --- LinearTPN 評価 ---
+        args_dict = vars(args).copy()
+        args_dict.pop("num_classes", None)
+        linear_model = LinearTPNModel(
+            backbone=backbone,
+            num_classes=18,
+            past_task_loaders=past_task_loaders,
+            **args_dict
+        )
 
-    # --- 過去タスク評価（安全実行） ---
-    if hasattr(linear_model, "evaluate_past_tasks") and linear_model.past_task_loaders:
-        print(f"[INFO] Evaluating past tasks for Task {task_idx}")
-        try:
-            linear_model.evaluate_past_tasks(trainer)
-        except Exception as e:
-            print(f"[WARN] Past task evaluation skipped due to error: {e}")
+        linear_model.hparams["tasks"] = tasks[:task_idx+1]
+        linear_model.hparams["split_strategy"] = "class"
+        linear_model.hparams["task_idx"] = task_idx
 
-    # --- チェックポイント保存 ---
-    if args.save_checkpoint:
-        linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
-        trainer.save_checkpoint(linear_ckpt)
-        print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
+        callbacks = []
+        wandb_logger = None
+        if args.wandb:
+            wandb_logger = WandbLogger(
+                name=f"{args.name}_task{task_idx}_seed{SEED}",
+                project=args.project,
+                entity=args.entity,
+                mode="offline" if args.offline else "online",
+                reinit=True,
+            )
+            wandb_logger.watch(linear_model, log="all", log_freq=100)
+            callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+
+        if args.save_checkpoint:
+            checkpoint_callback = ModelCheckpoint(
+                dirpath=args.checkpoint_dir,
+                filename=f"task{task_idx}_last",
+                save_last=True,
+                save_top_k=1,
+                monitor="train_loss",
+                verbose=True
+            )
+            callbacks.append(checkpoint_callback)
+
+        trainer = Trainer(
+            max_epochs=args.max_epochs,
+            accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            devices=1 if torch.cuda.is_available() else None,
+            precision=args.precision if torch.cuda.is_available() else 32,
+            callbacks=callbacks,
+            logger=wandb_logger,
+            log_every_n_steps=10,
+            enable_progress_bar=True
+        )
+        trainer.fit(
+            linear_model,
+            train_dataloaders=train_loaders[f"task{task_idx}"],
+            val_dataloaders=val_loader
+        )
+
+        # --- 過去タスク評価 ---
+        if hasattr(linear_model, "evaluate_past_tasks") and linear_model.past_task_loaders:
+            print(f"[INFO] Evaluating past tasks for Task {task_idx}")
+            try:
+                linear_model.evaluate_past_tasks(trainer)
+            except Exception as e:
+                print(f"[WARN] Past task evaluation skipped due to error: {e}")
+
+        # --- チェックポイント保存 ---
+        if args.save_checkpoint:
+            linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_linear.ckpt")
+            trainer.save_checkpoint(linear_ckpt)
+            print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
 
         with open(os.path.join(args.checkpoint_dir, "last_checkpoint.txt"), "w") as f:
             f.write(linear_ckpt)
@@ -215,6 +219,10 @@ def main():
                 f,
                 indent=4
             )
+
+        print(f"========== Task {task_idx} 完了 ==========\n")
+
+    print("[INFO] 全タスクの継続学習が完了しました！")
 
 if __name__ == "__main__":
     main()
