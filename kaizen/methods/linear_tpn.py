@@ -238,13 +238,45 @@ class LinearTPNModel(pl.LightningModule):
         self.log_dict(log, sync_dist=True)
     
     
-    def evaluate_past_tasks(self, trainer):
-        """過去タスクの評価を行い、val_acc1_task●として記録"""
-        results = {}
-        for past_idx, val_loader in enumerate(self.past_task_loaders):
-            res = trainer.validate(self, dataloaders=val_loader, verbose=False)
-            acc = res[0].get("val_acc1", 0.0)
-            results[f"val_acc1_task{past_idx}"] = acc
-            if self.logger:
-                self.logger.experiment.log({f"val_acc1_task{past_idx}": acc})
-        print(f"[INFO] Past task results: {results}")
+    def evaluate_past_tasks(self):
+        """過去タスクも含めた累積評価（未学習タスクはスキップ）"""
+        if not hasattr(self, "past_task_loaders") or not self.past_task_loaders:
+            print("[INFO] No past tasks to evaluate.")
+            return
+    
+        all_logs = {}
+        current_task_idx = getattr(self.hparams, "task_idx", 0)
+    
+        for task_idx, loader in enumerate(self.past_task_loaders):
+            # 未学習タスクはスキップ
+            if task_idx > current_task_idx:
+                continue
+    
+            preds_list, targets_list = [], []
+            try:
+                for batch in loader:
+                    _, _, _, _, logits = self.shared_step(batch, 0)
+                    preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                    targets_list.append(batch[-1].cpu().numpy())
+            except Exception as e:
+                print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
+                continue
+    
+            if not preds_list:
+                continue
+    
+            preds = np.concatenate(preds_list)
+            targets = np.concatenate(targets_list)
+            acc = (preds == targets).sum() / len(targets)
+            all_logs[f"val_acc1_task{task_idx}"] = acc
+    
+            # ローカル出力
+            print(f"[INFO] Validation accuracy for Task {task_idx}: {acc:.4f}")
+            self.log(f"cum_acc_task{task_idx}", acc, sync_dist=True)
+    
+        # wandbにまとめて記録
+        if all_logs:
+            import wandb
+            wandb.log(all_logs)
+            print(f"[INFO] Past task evaluation logs: {all_logs}")
+            print(f"[INFO] Past task results: {results}")
