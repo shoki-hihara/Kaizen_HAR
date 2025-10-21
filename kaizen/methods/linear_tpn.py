@@ -67,12 +67,10 @@ class LinearTPNModel(pl.LightningModule):
         return parent_parser
 
     def forward(self, X: torch.Tensor) -> Dict[str, Any]:
-        """TPN特徴抽出 + Linear層分類"""
-        with torch.no_grad():
-            # Conv1dの入力に合わせて次元を転置
-            if X.ndim == 3 and X.shape[1] == 384 and X.shape[2] == 3:
-                X = X.transpose(1, 2)  # [batch, seq_len, channels] -> [batch, channels, seq_len]
-            feats = self.backbone(X)
+        # ★no_grad()を削除
+        if X.ndim == 3 and X.shape[1] == 384 and X.shape[2] == 3:
+            X = X.transpose(1, 2)
+        feats = self.backbone(X)
         logits = self.classifier(feats)
         return {"feats": feats, "logits": logits}
 
@@ -152,10 +150,10 @@ class LinearTPNModel(pl.LightningModule):
         return batch_size, loss, acc1, acc5, logits
 
     def training_step(self, batch, batch_idx):
-        self.backbone.eval()
+        self.backbone.train()  # ★ここをeval()からtrain()に
         _, loss, acc1, acc5, _ = self.shared_step(batch, batch_idx)
         log = {"train_loss": loss, "train_acc1": acc1, "train_acc5": acc5}
-        self.log_dict(log, on_epoch=True, sync_dist=True)
+        self.log_dict(log, on_epoch=True, sync_dist=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -230,11 +228,10 @@ class LinearTPNModel(pl.LightningModule):
             print("[INFO] No past tasks to evaluate.")
             return
     
-        all_logs = {}
+        all_logs = []
         current_task_idx = getattr(self.hparams, "task_idx", 0)
     
         for task_idx, loader in enumerate(self.past_task_loaders):
-            # 未学習タスクはスキップ
             if task_idx > current_task_idx:
                 continue
     
@@ -253,18 +250,22 @@ class LinearTPNModel(pl.LightningModule):
     
             preds = np.concatenate(preds_list)
             targets = np.concatenate(targets_list)
-            acc = (preds == targets).sum() / len(targets)
-            
-            # --- ローカル出力 ---
+            acc = float((preds == targets).sum() / len(targets))
+    
             print(f"[INFO] Validation accuracy for Task {task_idx}: {acc:.4f}")
     
-            # --- Lightning Logger にも記録 ---
-            all_logs[f"val_acc1_task{task_idx}"] = float(acc)
-            self.log(f"val_acc1_task{task_idx}", float(acc), on_epoch=True, sync_dist=True)
-            self.log(f"cum_acc_task{task_idx}", float(acc), on_epoch=True, sync_dist=True)
+            # --- Lightning logger経由でWandB Tableに送信 ---
+            self.log(f"val_acc1_task{task_idx}", acc, on_step=True, logger=True, prog_bar=True, sync_dist=True)
+            self.log(f"cum_acc_task{task_idx}", acc, on_step=True, logger=True, prog_bar=True, sync_dist=True)
     
-        # --- WandB でもまとめて記録（必要なら） ---
+            all_logs.append({"task_idx": task_idx, "val_acc1": acc})
+    
+        # --- CSVに保存 ---
         if all_logs:
-            import wandb
-            wandb.log(all_logs)
-            print(f"[INFO] Past task evaluation logs: {all_logs}")
+            import pandas as pd, os
+            df = pd.DataFrame(all_logs)
+            save_dir = self.logger.log_dir if self.logger else "./"
+            os.makedirs(save_dir, exist_ok=True)
+            csv_path = os.path.join(save_dir, f"evaluate_past_tasks.csv")
+            df.to_csv(csv_path, index=False)
+            print(f"[INFO] Saved evaluation results to {csv_path}")
