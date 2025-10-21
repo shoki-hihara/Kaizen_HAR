@@ -238,27 +238,13 @@ class LinearTPNModel(pl.LightningModule):
         self.log_dict(log, sync_dist=True)
     
     
-    def evaluate_past_tasks(self):
-        """学習完了後に過去タスクの累積精度を個別計算"""
-        if not hasattr(self, "past_task_loaders") or not self.past_task_loaders:
-            return
-    
-        current_task_idx = getattr(self.hparams, "task_idx", 0)
-        for task_idx, loader in enumerate(self.past_task_loaders):
-            if task_idx > current_task_idx:
-                continue  # 未学習タスクはスキップ
-    
-            preds_list, targets_list = [], []
-            for batch in loader:
-                _, _, _, _, logits = self.shared_step(batch, 0)
-                preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                targets_list.append(batch[-1].cpu().numpy())
-    
-            if not preds_list:
-                continue
-    
-            preds_past = np.concatenate(preds_list)
-            targets_past = np.concatenate(targets_list)
-            acc = (preds_past == targets_past).sum() / len(targets_past)
-            print(f"[INFO] Cumulative accuracy for Task {task_idx}: {acc:.4f}")
-            self.log(f"cum_acc_task{task_idx}", acc, sync_dist=True)
+    def evaluate_past_tasks(self, trainer):
+        """過去タスクの評価を行い、val_acc1_task●として記録"""
+        results = {}
+        for past_idx, val_loader in enumerate(self.past_task_loaders):
+            res = trainer.validate(self, dataloaders=val_loader, verbose=False)
+            acc = res[0].get("val_acc1", 0.0)
+            results[f"val_acc1_task{past_idx}"] = acc
+            if self.logger:
+                self.logger.experiment.log({f"val_acc1_task{past_idx}": acc})
+        print(f"[INFO] Past task results: {results}")
