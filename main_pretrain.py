@@ -196,7 +196,7 @@ def main():
     if hasattr(linear_model, "evaluate_past_tasks") and linear_model.past_task_loaders:
         print(f"[INFO] Evaluating past tasks for Task {task_idx}")
         try:
-            linear_model.evaluate_past_tasks()
+            linear_model.evaluate_past_tasks(trainer)
         except Exception as e:
             print(f"[WARN] Past task evaluation skipped due to error: {e}")
 
