@@ -1,24 +1,53 @@
-# main_pretrain.py（修正版：タスク別hparamsと安全なwandb初期化）
+# main_pretrain.py (HAR対応 + 固定タスク + 蒸留維持)
+
+from ast import arg
 import os
-import json
-import random
+from pprint import pprint
+import types
+
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Subset
-from pathlib import Path, PosixPath
 from pytorch_lightning import Trainer, seed_everything
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 
-from kaizen.methods.linear_tpn import LinearTPNModel
-from kaizen.methods import TPNLightning
 from kaizen.args.setup import parse_args_pretrain
-from kaizen.utils.pretrain_dataloader_wisdm import prepare_wisdm_dataloaders
+from kaizen.methods import METHODS
+from kaizen.distillers import DISTILLERS
+from kaizen.distiller_factories import DISTILLER_FACTORIES, base_frozen_model_factory
 
-# -----------------------------
-# タスクマッピング
-# -----------------------------
-def map_labels_to_tasks():
+# DALI (未対応: 大元準拠)
+try:
+    from kaizen.methods.dali import PretrainABC
+except ImportError:
+    _dali_avaliable = False
+else:
+    _dali_avaliable = True
+
+# UMAP (任意)
+try:
+    from kaizen.utils.auto_umap import AutoUMAP
+except ImportError:
+    _umap_available = False
+else:
+    _umap_available = True
+
+from kaizen.utils.checkpointer import Checkpointer
+from kaizen.utils.classification_dataloader import prepare_data as prepare_data_classification
+from kaizen.utils.pretrain_dataloader import (
+    prepare_dataloader,
+    prepare_datasets,
+    prepare_multicrop_transform,
+    prepare_n_crop_transform,
+    prepare_transform,
+    split_dataset,
+    split_dataset_subset,
+    direct_prepare_split_dataset_subset,
+)
+
+
+# --- 固定タスク分割（wisdm2019用） ---
+def _fixed_wisdm_tasks():
     task_classes = [
         [17, 2, 0],    # タスク0
         [3, 10, 4],    # タスク1
@@ -27,194 +56,273 @@ def map_labels_to_tasks():
         [7, 15, 5],    # タスク4
         [13, 12, 14],  # タスク5
     ]
-    label_to_task = {}
-    for idx, labels in enumerate(task_classes):
-        for label in labels:
-            label_to_task[label] = idx
-    return task_classes, label_to_task
+    import torch as _torch
+    return tuple(_torch.tensor(cls, dtype=_torch.long) for cls in task_classes)
 
-# -----------------------------
-# データローダ準備
-# -----------------------------
-def prepare_task_datasets(data_dir, task_idx, tasks, batch_size=64, num_workers=2, replay=False, replay_proportion=0.01):
-    train_loader, val_loader = prepare_wisdm_dataloaders(
-        data_dir=data_dir,
-        batch_size=batch_size,
-        val_ratio=0.1,
-        num_workers=num_workers
-    )
 
-    loaders = {f"task{task_idx}": train_loader}
-
-    if replay and task_idx != 0:
-        replay_size = max(1, int(len(train_loader.dataset) * replay_proportion))
-        indices = np.random.choice(len(train_loader.dataset), replay_size, replace=False)
-        replay_dataset = Subset(train_loader.dataset, indices)
-        replay_loader = DataLoader(replay_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-        loaders["replay"] = replay_loader
-
-    return loaders, val_loader, train_loader
-
-# -----------------------------
-# 再現性の確保
-# -----------------------------
-def set_seed(seed=5):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-# -----------------------------
-# メイン処理
-# -----------------------------
 def main():
     args = parse_args_pretrain()
-    SEED = getattr(args, "global_seed", 5)
-    set_seed(SEED)
-    seed_everything(SEED)
 
-    if not hasattr(args, "checkpoint_dir") or args.checkpoint_dir is None:
-        raise ValueError("checkpoint_dir must be provided")
-    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    # DALIは未対応（大元と同じ方針）
+    if args.dali:
+        raise NotImplementedError("Dali is not supported")
 
-    tasks, label_to_task = map_labels_to_tasks()
-    task_idx = getattr(args, "task_idx", 0)
+    # Online evaluation の DataLoader 複数切替ポリシー
+    args.multiple_trainloader_mode = "max_size_cycle"  # 大元値
 
-    # --- 各タスクごとのデータ準備 ---
-    train_loaders, val_loader, current_train_loader = prepare_task_datasets(
-        data_dir=args.data_dir,
-        task_idx=task_idx,
-        tasks=tasks,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-        replay=args.replay,
-        replay_proportion=args.replay_proportion
-    )
+    # Online eval のバッチサイズ
+    args.online_eval_batch_size = int(args.batch_size) if args.online_evaluation else None
 
-    # --- 過去タスクローダ ---
-    past_task_loaders = []
-    for past_idx in range(task_idx):
-        task_labels = tasks[past_idx]
-        _, prev_val_loader = prepare_wisdm_dataloaders(  # ✅ val_loaderを取得
-            data_dir=args.data_dir,
-            batch_size=args.batch_size,
-            val_ratio=0.1,
-            num_workers=args.num_workers
-        )
-        indices = [i for i, (_, y) in enumerate(prev_val_loader.dataset) if y in task_labels]
-        if len(indices) == 0:
-            continue
-        subset = Subset(prev_val_loader.dataset, indices)
-        loader = DataLoader(subset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
-        past_task_loaders.append(loader)
-
-
-    # --- TPN 学習 ---
-    backbone = TPNLightning(
-        in_channels=3,
-        feature_dim=getattr(args, "feature_dim", 128),
-        num_classes=18,
-        lr=args.lr if hasattr(args, "lr") else 1e-3
-    )
-
-    current_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_tpn.ckpt")
-    if task_idx != 0:
-        prev_tpn_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx-1}_tpn.ckpt")
-        if os.path.exists(prev_tpn_ckpt):
-            print(f"[INFO] Loading previous TPNLightning checkpoint from {prev_tpn_ckpt}")
-            backbone.load_state_dict(torch.load(prev_tpn_ckpt, map_location="cpu")["state_dict"])
+    # --- タスク分割（class-split） ---
+    tasks = None
+    if args.split_strategy == "class":
+        if getattr(args, "dataset", "").lower() == "wisdm2019":
+            # 固定タスクを使用
+            assert args.num_classes == 18, f"wisdm2019 expected num_classes=18, got {args.num_classes}"
+            assert args.num_tasks == 6, f"wisdm2019 expected num_tasks=6, got {args.num_tasks}"
+            tasks = _fixed_wisdm_tasks()
         else:
-            print(f"[WARN] Previous TPN checkpoint not found, starting fresh.")
+            assert args.num_classes % args.num_tasks == 0
+            torch.manual_seed(args.split_seed)
+            tasks = torch.randperm(args.num_classes).chunk(args.num_tasks)
+        print("Task Classes (resolved):", tasks)
 
-    tpn_trainer = Trainer(
-        max_epochs=args.max_epochs,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1 if torch.cuda.is_available() else None,
-        precision=args.precision if torch.cuda.is_available() else 32
-    )
-    tpn_trainer.fit(backbone, train_dataloaders=train_loaders[f"task{task_idx}"])
-    tpn_trainer.save_checkpoint(current_tpn_ckpt)
-    print(f"[INFO] Saved TPN checkpoint: {current_tpn_ckpt}")
+    # 乱数固定
+    seed_everything(args.global_seed)
 
-    # --- LinearTPN 評価 ---
-    args_dict = vars(args).copy()
-    args_dict.pop("num_classes", None)
-    linear_model = LinearTPNModel(
-        backbone=backbone,
-        num_classes=18,
-        past_task_loaders=past_task_loaders,
-        **args_dict
-    )
+    # --- データ準備（大元ロジックを踏襲） ---
+    if not args.dali:
+        # 変換の構築
+        if args.unique_augs > 1:
+            transform = [
+                prepare_transform(args.dataset, multicrop=args.multicrop, **kwargs)
+                for kwargs in args.transform_kwargs
+            ]
+        else:
+            transform = prepare_transform(
+                args.dataset, multicrop=args.multicrop, **args.transform_kwargs
+            )
 
-    # ✅ 修正ポイント: 現タスクまでを渡す
-    linear_model.hparams["tasks"] = tasks[:task_idx+1]
-    linear_model.hparams["split_strategy"] = "class"
-    linear_model.hparams["task_idx"] = task_idx
+        if args.debug_augmentations:
+            print("Transforms:")
+            pprint(transform)
 
+        # マルチクロップかどうか
+        if args.multicrop:
+            assert not args.unique_augs == 1
+            if args.dataset in ["cifar10", "cifar100", "wisdm2019"]:
+                size_crops = [32, 24]
+            elif args.dataset == "stl10":
+                size_crops = [96, 58]
+            else:
+                size_crops = [224, 96]
+            transform = prepare_multicrop_transform(
+                transform,
+                size_crops=size_crops,
+                num_crops=[args.num_crops, args.num_small_crops],
+            )
+        else:
+            if args.num_crops != 2:
+                assert args.method == "wmse"
+            online_eval_transform = transform[-1] if isinstance(transform, list) else transform
+            task_transform = prepare_n_crop_transform(transform, num_crops=args.num_crops)
+
+        # データセット
+        train_dataset, online_eval_dataset = prepare_datasets(
+            args.dataset,
+            task_transform=task_transform,
+            online_eval_transform=online_eval_transform,
+            data_dir=args.data_dir,
+            train_dir=args.train_dir,
+            val_dir=args.val_dir,
+            no_labels=args.no_labels,
+        )
+
+        # タスク分割
+        task_dataset, tasks = split_dataset(
+            train_dataset,
+            tasks=tasks,
+            task_idx=args.task_idx,
+            num_tasks=args.num_tasks,
+            split_strategy=args.split_strategy,
+            split_seed=args.split_seed,
+        )
+
+        # データローダ
+        task_loader = prepare_dataloader(
+            task_dataset,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+        )
+        train_loaders = {f"task{args.task_idx}": task_loader}
+
+        # リプレイ
+        if args.replay and args.task_idx != 0:
+            replay_dataset = direct_prepare_split_dataset_subset(
+                dataset=args.dataset,
+                task_transform=task_transform,
+                online_eval_transform=online_eval_transform,
+                data_dir=args.data_dir,
+                train_dir=args.train_dir,
+                no_labels=args.no_labels,
+                tasks=tasks,
+                replay_task_idxs=np.arange(args.task_idx),
+                num_tasks=args.num_tasks,
+                split_strategy=args.split_strategy,
+                split_seed=args.split_seed,
+                proportion=args.replay_proportion,
+                num_samples=args.replay_memory_bank_size,
+            )
+            replay_loader = prepare_dataloader(
+                replay_dataset,
+                batch_size=min(args.replay_batch_size, len(replay_dataset)),
+                num_workers=args.num_workers,
+            )
+            train_loaders.update({"replay": replay_loader})
+
+        # Online eval
+        if args.online_eval_batch_size:
+            if args.online_evaluation_training_data_source == "all_tasks":
+                online_eval_dataset_final = online_eval_dataset
+            elif args.online_evaluation_training_data_source == "current_task":
+                online_eval_dataset_final, _ = split_dataset(
+                    online_eval_dataset,
+                    tasks=tasks,
+                    task_idx=args.task_idx,
+                    num_tasks=args.num_tasks,
+                    split_strategy=args.split_strategy,
+                    split_seed=args.split_seed,
+                )
+            elif args.online_evaluation_training_data_source == "seen_tasks":
+                task_idxs = [i for i in range(args.task_idx + 1)]
+                online_eval_dataset_final, _ = split_dataset(
+                    online_eval_dataset,
+                    tasks=tasks,
+                    task_idx=task_idxs,
+                    num_tasks=args.num_tasks,
+                    split_strategy=args.split_strategy,
+                    split_seed=args.split_seed,
+                )
+            else:
+                online_eval_dataset_final = online_eval_dataset
+
+            online_eval_loader = prepare_dataloader(
+                online_eval_dataset_final,
+                batch_size=-(-len(online_eval_dataset_final) // len(task_loader)),
+                num_workers=args.num_workers,
+            )
+            train_loaders.update({"online_eval": online_eval_loader})
+
+    # --- 検証用データローダ ---
+    if args.dataset == "custom" and (args.no_labels or args.val_dir is None):
+        val_loader = None
+    elif args.dataset in ["imagenet100", "imagenet"] and args.val_dir is None:
+        val_loader = None
+    else:
+        _, val_loader = prepare_data_classification(
+            args.dataset,
+            data_dir=args.data_dir,
+            train_dir=args.train_dir,
+            val_dir=args.val_dir,
+            batch_size=args.batch_size,
+            num_workers=2 * args.num_workers,
+        )
+
+    # --- 手法クラス構築 ---
+    assert args.method in METHODS, f"Choose from {METHODS.keys()}"
+    MethodClass = METHODS[args.method]
+
+    if args.dali:
+        assert _dali_avaliable, "Dali is not currently available; install with [dali]."
+        MethodClass = types.new_class(f"Dali{MethodClass.__name__}", (PretrainABC, MethodClass))
+
+    # --- 蒸留の有無（Kaizen準拠） ---
+    if args.distiller_library == "default":
+        if args.distiller:
+            MethodClass = DISTILLERS[args.distiller](MethodClass)
+    elif args.distiller_library == "factory":
+        if args.distiller:
+            MethodClass = base_frozen_model_factory(MethodClass)
+            MethodClass = DISTILLER_FACTORIES[args.distiller](
+                MethodClass,
+                distill_current_key="z",
+                distill_frozen_key="frozen_z",
+                output_dim=args.output_dim,
+                class_tag="feature_extractor",
+            )
+            if args.classifier_training and args.distiller_classifier is not None:
+                MethodClass = DISTILLER_FACTORIES[args.distiller_classifier](
+                    MethodClass,
+                    distill_current_key="classifier_logits",
+                    distill_frozen_key="frozen_logits",
+                    output_dim=args.num_classes,
+                    class_tag="classifier",
+                )
+
+    # --- モデル生成 ---
+    model = MethodClass(**args.__dict__, tasks=tasks if args.split_strategy == "class" else None)
+
+    # --- チェックポイント再開処理 ---
+    assert [args.resume_from_checkpoint, args.pretrained_model].count(True) <= 1
+    if args.resume_from_checkpoint:
+        pass
+    elif args.pretrained_model:
+        print(f"Loading previous task checkpoint {args.pretrained_model}...")
+        state_dict = torch.load(args.pretrained_model, map_location="cpu")["state_dict"]
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        print("Missing keys:", missing_keys)
+        print("Unexpected keys:", unexpected_keys)
+
+    # --- コールバック / ロガー ---
     callbacks = []
-    wandb_logger = None
     if args.wandb:
         wandb_logger = WandbLogger(
-            name=f"{args.name}_task{task_idx}_seed{SEED}",
+            name=f"{args.name}-task{args.task_idx}",
             project=args.project,
             entity=args.entity,
-            mode="offline" if args.offline else "online",
+            offline=args.offline,
             reinit=True,
         )
-        wandb_logger.watch(linear_model, log="all", log_freq=100)
-        callbacks.append(LearningRateMonitor(logging_interval="epoch"))
+        if args.task_idx == 0:
+            wandb_logger.watch(model, log="gradients", log_freq=100)
+        wandb_logger.log_hyperparams(args)
+        lr_monitor = LearningRateMonitor(logging_interval="epoch")
+        callbacks.append(lr_monitor)
+    else:
+        wandb_logger = None
 
     if args.save_checkpoint:
-        checkpoint_callback = ModelCheckpoint(
-            dirpath=args.checkpoint_dir,
-            filename=f"task{task_idx}_last",
-            save_last=True,
-            save_top_k=1,
-            monitor="train_loss",
-            verbose=True
+        ckpt = Checkpointer(
+            args,
+            logdir=args.checkpoint_dir,
+            frequency=args.checkpoint_frequency,
         )
-        callbacks.append(checkpoint_callback)
+        callbacks.append(ckpt)
 
-    trainer = Trainer(
-        max_epochs=args.max_epochs,
-        accelerator="gpu" if torch.cuda.is_available() else "cpu",
-        devices=1 if torch.cuda.is_available() else None,
-        precision=args.precision if torch.cuda.is_available() else 32,
+    if args.auto_umap:
+        assert _umap_available, "UMAP is not currently available; install with [umap]."
+        auto_umap = AutoUMAP(
+            args,
+            logdir=os.path.join(args.auto_umap_dir, args.method),
+            frequency=args.auto_umap_frequency,
+        )
+        callbacks.append(auto_umap)
+
+    # --- Trainer 構築 ---
+    trainer = Trainer.from_argparse_args(
+        args,
+        logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
-        logger=wandb_logger,
-        log_every_n_steps=10,
-        enable_progress_bar=True
-    )
-    trainer.fit(
-        linear_model,
-        train_dataloaders=train_loaders[f"task{task_idx}"],
-        val_dataloaders=val_loader
     )
 
-    # --- 過去タスク評価（安全実行） ---
-    if hasattr(linear_model, "evaluate_past_tasks") and linear_model.past_task_loaders:
-        print(f"[INFO] Evaluating past tasks for Task {task_idx}")
-        try:
-            linear_model.evaluate_past_tasks(trainer)
-        except Exception as e:
-            print(f"[WARN] Past task evaluation skipped due to error: {e}")
+    model.current_task_idx = args.task_idx
 
-    # --- チェックポイント保存 ---
-    if args.save_checkpoint:
-        linear_ckpt = os.path.join(args.checkpoint_dir, f"task{task_idx}_last.ckpt")
-        trainer.save_checkpoint(linear_ckpt)
-        print(f"[INFO] Saved LinearTPN checkpoint to {linear_ckpt}")
+    # --- 学習 ---
+    if args.dali:
+        trainer.fit(model, val_dataloaders=val_loader)
+    else:
+        trainer.fit(model, train_dataloaders=train_loaders, val_dataloaders=val_loader)
 
-        with open(os.path.join(args.checkpoint_dir, "last_checkpoint.txt"), "w") as f:
-            f.write(linear_ckpt)
-        with open(os.path.join(args.checkpoint_dir, "args.json"), "w") as f:
-            json.dump(
-                {k: str(v) if isinstance(v, (Path, PosixPath)) else v for k, v in vars(args).items()},
-                f,
-                indent=4
-            )
 
 if __name__ == "__main__":
     main()
