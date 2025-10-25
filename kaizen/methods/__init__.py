@@ -35,7 +35,7 @@ METHODS = {
     "swav": SwAV,
     "vicreg": VICReg,
     "wmse": WMSE,
-    "tpn": TPNLightning,
+    "tpn": TPNMethod,
     "linear_tpn": LinearTPNModel,
     "wisdm": WISDMDataset,
 }
@@ -55,7 +55,7 @@ __all__ = [
     "SwAV",
     "VICReg",
     "WMSE",
-    "TPNLightning",
+    "TPNMethod",
     "LinearTPNModel",
     "WISDMDataset",
 ]
