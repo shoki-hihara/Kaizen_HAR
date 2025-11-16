@@ -213,20 +213,23 @@ def main():
             )
             train_loaders.update({"online_eval": online_eval_loader})
 
-    # --- 検証用データローダ ---
-    if args.dataset == "custom" and (args.no_labels or args.val_dir is None):
-        val_loader = None
-    elif args.dataset in ["imagenet100", "imagenet"] and args.val_dir is None:
-        val_loader = None
-    else:
-        _, val_loader = prepare_data_classification(
-            args.dataset,
-            data_dir=args.data_dir,
-            train_dir=args.train_dir,
-            val_dir=args.val_dir,
-            batch_size=args.batch_size,
-            num_workers=2 * args.num_workers,
-        )
+        # --- 検証用データローダ ---
+        if args.dataset == "custom" and (args.no_labels or args.val_dir is None):
+            val_loader = None
+        elif args.dataset in ["imagenet100", "imagenet"] and args.val_dir is None:
+            val_loader = None
+        elif args.dataset == "wisdm2019":
+            # HAR 用 pretrain では画像用の分類 val_loader は使わない
+            val_loader = None
+        else:
+            _, val_loader = prepare_data_classification(
+                args.dataset,
+                data_dir=args.data_dir,
+                train_dir=args.train_dir,
+                val_dir=args.val_dir,
+                batch_size=args.batch_size,
+                num_workers=2 * args.num_workers,
+            )
 
     # --- 手法クラス構築 ---
     assert args.method in METHODS, f"Choose from {METHODS.keys()}"
