@@ -30,6 +30,7 @@ class LinearTPNModel(pl.LightningModule):
             kwargs: CLIから渡されるハイパーパラメータ
         """
         super().__init__()
+        print("[DEBUG] LinearTPNModel __init__ called", flush=True)
 
         self.backbone = backbone
         with torch.no_grad():
