@@ -14,16 +14,45 @@ class TPN(nn.Module):
         self.bn2 = nn.BatchNorm1d(128)
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(128, feature_dim)
-        self.features_dim = feature_dim
+        self.feature_dim = feature_dim
 
     def forward(self, x):
-        # WISDM用: [B, seq_len, C] → [B, C, seq_len] に変換する例
-        if x.ndim == 3 and x.shape[1] not in (1, 3):
-            x = x.transpose(1, 2)
+        """
+        想定される入力パターン：
+        - (B, 384, 3): WISDM の元データ [seq_len, channels]
+        - (B, 3, 384): すでに Conv1d 用に並び替え済み
+        - (B, 1, 384, 3): frozen_encoder 経由で入ってきている現在のケース
+        """
+
+        # --- 4次元 [B, 1, 384, 3] への対応 ---
+        if x.ndim == 4:
+            # 期待通り「ダミーチャンネル 1」が立っている場合
+            if x.shape[1] == 1 and x.shape[2] == 384 and x.shape[3] == 3:
+                # (B, 1, 384, 3) → (B, 384, 3)
+                x = x.squeeze(1)
+            else:
+                # 想定外の形が来た場合は、デバッグがしやすいように明示的にエラー
+                raise RuntimeError(f"TPN got 4D input with unexpected shape: {tuple(x.shape)}")
+
+        # --- ここから 3次元の処理 ---
+        if x.ndim != 3:
+            raise RuntimeError(f"TPN expects 3D input after preprocessing, but got {x.ndim}D: {tuple(x.shape)}")
+
+        # x: (B, 384, 3) → (B, 3, 384) に並び替え
+        if x.shape[1] == 384 and x.shape[2] == 3:
+            x = x.permute(0, 2, 1)  # (B, 3, 384)
+        # すでに (B, 3, 384) ならそのまま
+        elif x.shape[1] == 3 and x.shape[2] == 384:
+            pass
+        else:
+            raise RuntimeError(f"TPN got 3D input with unexpected shape: {tuple(x.shape)}")
+
+        # Conv1d パス
         x = F.relu(self.bn1(self.conv1(x)))
         x = F.relu(self.bn2(self.conv2(x)))
-        x = self.pool(x).squeeze(-1)
-        x = self.fc(x)
+        x = self.pool(x)           # (B, 128, 1)
+        x = x.squeeze(-1)          # (B, 128)
+        x = self.fc(x)             # (B, feature_dim)
         return x
 
 class TPNMethod(pl.LightningModule):
