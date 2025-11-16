@@ -41,7 +41,20 @@ def base_frozen_model_factory(MethodClass=object):
             return feats_encoder, feats_projector, logits_classifier
 
         def training_step(self, batch: Sequence[Any], batch_idx: int) -> torch.Tensor:
-            _, (X1, X2), _ = batch[f"task{self.current_task_idx}"]
+            data = batch[f"task{self.current_task_idx}"]
+        
+            # CIFAR 版 Kaizen では: (idx, (X1, X2), y)
+            # 今の WISDM 版では   : ((X1, X2), y)
+            if len(data) == 3:
+                _, (X1, X2), _ = data
+            elif len(data) == 2:
+                (X1, X2), _ = data
+            else:
+                raise ValueError(
+                    f"Unexpected batch format for task{self.current_task_idx}: "
+                    f"type={type(data)}, len={len(data)}"
+                )
+
             if "replay" in batch:
                 *_, (X1R, X2R), _ = batch["replay"]
                 X1 = torch.cat([X1, X1R])
