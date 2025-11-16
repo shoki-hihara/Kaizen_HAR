@@ -27,6 +27,20 @@ class MoCoV2Plus(BaseMomentumModel):
 
         super().__init__(**kwargs)
 
+        if self.hparams.online_evaluation:
+            # すでに MultiLayerClassifier ベースの online_eval_classifier があるなら、
+            # HAR の場合だけ LinearTPNModel に差し替える、という条件にしてもよい。
+            if getattr(self.hparams, "dataset", "") == "wisdm2019":
+                self.online_evaluator = LinearTPNModel(
+                    backbone=self.encoder,                 # TPN backbone
+                    num_classes=self.hparams.num_classes,
+                    tasks=self.hparams.tasks,             # main_pretrainから渡しているやつ
+                    split_strategy=self.hparams.split_strategy,
+                    task_idx=self.hparams.task_idx,
+                    # 必要なら past_task_loaders もここで渡す
+                    **kwargs_for_linear_tpn,
+                )
+
         self.temperature = temperature
         self.queue_size = queue_size
 
