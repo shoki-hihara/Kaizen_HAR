@@ -267,6 +267,13 @@ def main():
     # --- モデル生成 ---
     model = MethodClass(**args.__dict__, tasks=tasks if args.split_strategy == "class" else None)
 
+    print("[DEBUG] Top-level model class:", type(model))
+
+    if hasattr(model, "online_evaluator"):
+        print("[DEBUG] online_evaluator type:", type(model.online_evaluator))
+    else:
+        print("[DEBUG] model has no attribute 'online_evaluator'")
+
     # --- チェックポイント再開処理 ---
     assert [args.resume_from_checkpoint, args.pretrained_model].count(True) <= 1
     if args.resume_from_checkpoint:
