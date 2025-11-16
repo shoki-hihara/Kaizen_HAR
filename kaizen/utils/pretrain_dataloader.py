@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from torch.utils.data.dataset import Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import STL10, ImageFolder
+from kaizen.methods.dataloader import WISDMDataset
 
 
 def split_dataset(
@@ -796,6 +797,22 @@ def prepare_datasets(
         train_dir = Path(train_dir)
 
     online_eval_dataset = None
+
+    if dataset.lower() == "wisdm2019":
+        # pretrain 用のタスクデータ
+        train_dataset = WISDMDataset(
+            data_dir=data_dir,         # /content/data など
+            split="train",
+            transform=task_transform,
+        )
+        # online eval 用のデータ（基本的には同じ train データで OK）
+        online_eval_dataset = WISDMDataset(
+            data_dir=data_dir,
+            split="train",
+            transform=online_eval_transform,
+        )
+        return train_dataset, online_eval_dataset
+    
     if dataset in ["cifar10", "cifar100"]:
         DatasetClass = vars(torchvision.datasets)[dataset.upper()]
         dataset = dataset_with_index(DatasetClass)(
