@@ -608,63 +608,73 @@ class BaseModel(pl.LightningModule):
     def validation_step(self, batch: List[torch.Tensor], batch_idx: int) -> Dict[str, Any]:
         """Validation step for pytorch lightning. It does all the shared operations, such as
         forwarding a batch of images, computing logits and computing metrics.
-
+    
         Args:
-            batch (List[torch.Tensor]):a batch of data in the format of [img_indexes, X, Y]
+            batch (List[torch.Tensor]): a batch of data in the format of [img_indexes, X, Y]
             batch_idx (int): index of the batch
-
+    
         Returns:
             Dict[str, Any]:
                 dict with the batch_size (used for averaging),
                 the classification loss and accuracies
         """
-        
+    
+        # ----- 1) X, targets を取り出す -----
         if len(batch) == 3:
-            _, X, targets = batch
+            _, X, targets = batch        # (idx, X, y)
         elif len(batch) == 2:
-            X, targets = batch
+            X, targets = batch           # (X, y)
         else:
-            batch_size = targets.size(0)
+            # 想定外の形式なら明示的にエラーにしておく
+            raise ValueError(f"Unexpected batch format in validation_step: len(batch)={len(batch)}")
+    
+        # ----- 2) batch_size を必ずここで定義 -----
+        batch_size = X.size(0)
+    
         metrics = {
             "batch_size": batch_size,
             "targets": targets,
         }
-        model_outs = {}
-        
+        model_outs: Dict[str, Any] = {}
+    
+        # ----- 3) ここから元のロジック -----
         with torch.no_grad():
             feats = self.base_forward(X)
-
+    
         if self.classifier_training:
             with torch.no_grad():
                 classifier_outs = self._classifier_partial_step(feats["feats"], targets)
             classifier_outs = {"classifier_" + k: v for k, v in classifier_outs.items()}
-
+    
             metrics.update({
                 "val_classifier_loss": classifier_outs["classifier_loss"],
                 "val_classifier_acc1": classifier_outs["classifier_acc1"],
                 "val_classifier_acc5": classifier_outs["classifier_acc5"],
             })
             model_outs.update(classifier_outs)
-        
+    
         if not self.disable_knn_eval and not self.trainer.sanity_checking:
             self.knn(test_features=feats.pop("feats").detach(), test_targets=targets)
-
+    
         if self.split_strategy == "domain" and len(batch) == 3:
             metrics["domains"] = batch[0]
-
+    
+        # NOTE: 属性名が `self.online_eval` になっているので、
+        # hparams 側は `online_evaluation` でも、ここは `online_eval` を見る仕様のようです。
         if self.online_eval:
             with torch.no_grad():
                 outs_online_eval = self._online_eval_shared_step(X, targets)
             outs_online_eval = {"online_eval_" + k: v for k, v in outs_online_eval.items()}
-
+    
             metrics.update({
                 "val_online_eval_loss": outs_online_eval["online_eval_loss"],
                 "val_online_eval_acc1": outs_online_eval["online_eval_acc1"],
                 "val_online_eval_acc5": outs_online_eval["online_eval_acc5"],
             })
             model_outs.update(outs_online_eval)
-
+    
         return {**metrics, **model_outs}
+
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
         """Averages the losses and accuracies of all the validation batches.
