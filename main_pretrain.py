@@ -326,14 +326,18 @@ def main():
         logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
     )
-
+    
     model.current_task_idx = args.task_idx
-
+    
     # --- 学習 ---
     if args.dali:
         trainer.fit(model, val_dataloaders=val_loader)
     else:
-        trainer.fit(model, train_dataloaders=train_loaders, val_dataloaders=val_loader)
+        if args.dataset.lower() == "wisdm2019":
+            # ★ HAR では validation loop を回さない
+            trainer.fit(model, train_dataloaders=train_loaders)
+        else:
+            trainer.fit(model, train_dataloaders=train_loaders, val_dataloaders=val_loader)
 
 
 if __name__ == "__main__":
