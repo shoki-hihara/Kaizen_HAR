@@ -3,8 +3,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from kaizen.methods.tpn import TPN
 
+
+class TPN(nn.Module):
+    def __init__(self, in_channels=3, feature_dim=128):
+        super().__init__()
+        self.conv1 = nn.Conv1d(in_channels, 64, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.conv2 = nn.Conv1d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm1d(128)
+        self.pool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(128, feature_dim)
+        self.feature_dim = feature_dim
+
+    def forward(self, x):
+        # WISDM用: [B, seq_len, C] → [B, C, seq_len] に変換する例
+        if x.ndim == 3 and x.shape[1] not in (1, 3):
+            x = x.transpose(1, 2)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = self.pool(x).squeeze(-1)
+        x = self.fc(x)
+        return x
 
 class TPNMethod(pl.LightningModule):
     """
