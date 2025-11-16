@@ -704,9 +704,15 @@ def prepare_transform(dataset: str, multicrop: bool = False, **kwargs) -> Any:
         return (
             ImagenetTransform(**kwargs) if not multicrop else MulticropImagenetTransform(**kwargs)
         )
+    elif dataset == "wisdm2019":
+        # HAR 用：まずは「そのまま返すだけ」の identity transform
+        def identity(x):
+            return x
+        return identity
     elif dataset == "custom":
         return CustomTransform(**kwargs) if not multicrop else MulticropCustomTransform(**kwargs)
-
+    else:
+        raise ValueError(f"Unsupported dataset for prepare_transform: {dataset}")
 
 def prepare_n_crop_transform(
     transform: Callable, num_crops: Optional[int] = None
