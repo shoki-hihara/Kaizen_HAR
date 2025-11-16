@@ -49,15 +49,14 @@ from kaizen.utils.pretrain_dataloader import (
 # --- 固定タスク分割（wisdm2019用） ---
 def _fixed_wisdm_tasks():
     task_classes = [
-        [17, 2, 0],    # タスク0
-        [3, 10, 4],    # タスク1
-        [4, 11, 16],   # タスク2
-        [6, 1, 9],     # タスク3
-        [7, 15, 5],    # タスク4
-        [13, 12, 14],  # タスク5
+        [17, 2, 0],
+        [3, 10, 4],
+        [4, 11, 16],
+        [6, 1, 9],
+        [7, 15, 5],
+        [13, 12, 14],
     ]
-    import torch as _torch
-    return tuple(_torch.tensor(cls, dtype=_torch.long) for cls in task_classes)
+    return task_classes  # そのまま List[List[int]] で返す
 
 
 def main():
