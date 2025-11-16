@@ -48,7 +48,7 @@ class LinearTPNModel(pl.LightningModule):
         self.split_strategy = split_strategy
         self.task_idx = task_idx
 
-        # CLI引数をまとめて保持（backbone 等は除外してもOK）
+        # hparams 保存（backbone など学習不要なものは無視）
         self.save_hyperparameters(ignore=["backbone", "classifier", "past_task_loaders"])
 
         self.domains = ["real", "quickdraw", "painting", "sketch", "infograph", "clipart"]
