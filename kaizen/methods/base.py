@@ -429,8 +429,10 @@ class BaseModel(pl.LightningModule):
         Returns:
             torch.Tensor: features extracted by the encoder.
         """
-        if X.ndim == 3 and X.shape[1] != 3:
-            X = X.permute(0, 2, 1)  # (B, C, T)
+        # WISDM + TPN 用: [B, 1, 384, 3] を [B, 384, 3] に直す
+        if X.ndim == 4 and X.shape[1] == 1:
+            # 例: (batch, 1, seq_len, channels) -> (batch, seq_len, channels)
+            X = X.squeeze(1)
         feats = self.encoder(X)
         return {"feats": feats}
 
@@ -841,7 +843,9 @@ class BaseMomentumModel(BaseModel):
         Returns:
             Dict: dict of logits and features.
         """
-
+        # WISDM + TPN 用: [B, 1, 384, 3] を [B, 384, 3] に直す
+        if X.ndim == 4 and X.shape[1] == 1:
+            X = X.squeeze(1)
         feats = self.momentum_encoder(X)
         return {"feats": feats}
 
