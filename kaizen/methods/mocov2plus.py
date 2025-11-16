@@ -9,6 +9,8 @@ from kaizen.methods.base import BaseMomentumModel
 from kaizen.utils.gather_layer import gather
 from kaizen.utils.momentum import initialize_momentum_params
 
+from kaizen.methods.linear_tpn import LinearTPNModel
+
 
 class MoCoV2Plus(BaseMomentumModel):
     queue: torch.Tensor
@@ -27,19 +29,34 @@ class MoCoV2Plus(BaseMomentumModel):
 
         super().__init__(**kwargs)
 
-        if self.hparams.online_evaluation:
-            # すでに MultiLayerClassifier ベースの online_eval_classifier があるなら、
-            # HAR の場合だけ LinearTPNModel に差し替える、という条件にしてもよい。
-            if getattr(self.hparams, "dataset", "") == "wisdm2019":
-                self.online_evaluator = LinearTPNModel(
-                    backbone=self.encoder,                 # TPN backbone
-                    num_classes=self.hparams.num_classes,
-                    tasks=self.hparams.tasks,             # main_pretrainから渡しているやつ
-                    split_strategy=self.hparams.split_strategy,
-                    task_idx=self.hparams.task_idx,
-                    # 必要なら past_task_loaders もここで渡す
-                    **kwargs_for_linear_tpn,
-                )
+        if getattr(self.hparams, "online_evaluation", False) and getattr(
+            self.hparams, "dataset", ""
+        ).lower() == "wisdm2019":
+
+            # LinearTPNModel に渡すハイパーパラメータを組み立て
+            linear_tpn_kwargs = dict(
+                optimizer=kwargs.get("optimizer", "sgd"),
+                lars=kwargs.get("lars", False),
+                exclude_bias_n_norm=kwargs.get("exclude_bias_n_norm", False),
+                scheduler=kwargs.get("scheduler", "reduce"),
+                lr_decay_steps=kwargs.get("lr_decay_steps", None),
+                # 線形評価の lr は online_eval_classifier_lr があればそれを使う
+                lr=kwargs.get("online_eval_classifier_lr", kwargs.get("lr", 0.1)),
+                weight_decay=kwargs.get("weight_decay", 1e-5),
+                max_epochs=kwargs.get("max_epochs", 200),
+                batch_size=kwargs.get("batch_size", 256),
+                freeze_backbone=True,
+                split_strategy=kwargs.get("split_strategy", "class"),
+                tasks=kwargs.get("tasks", None),
+                task_idx=kwargs.get("task_idx", 0),
+            )
+
+            self.online_evaluator = LinearTPNModel(
+                backbone=self.encoder,  # TPN backbone
+                num_classes=kwargs.get("num_classes"),  # hparams.num_classes と同じはず
+                past_task_loaders=None,  # 必要なら後で差し込める
+                **linear_tpn_kwargs,
+            )
 
         self.temperature = temperature
         self.queue_size = queue_size
