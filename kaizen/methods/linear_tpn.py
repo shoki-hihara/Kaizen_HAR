@@ -175,12 +175,11 @@ class LinearTPNModel(pl.LightningModule):
         return results
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
-        # sanity check 中はスキップ（ここは今の実装のままでOK）
+        # 全体の集計
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
 
-        # まずは全体のログ
         log: Dict[str, Any] = {
             "val_loss": val_loss,
             "val_acc1": val_acc1,
@@ -192,16 +191,18 @@ class LinearTPNModel(pl.LightningModule):
             targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
             mask_correct = preds == targets
 
-            # ★ split_strategy / tasks は self 属性から取る
+            # ★class-split のタスク別 Acc（元 linear.py とほぼ同じ）
             if self.split_strategy == "class" and self.tasks is not None:
                 for task_idx, task in enumerate(self.tasks):
-                    # ここも元 Kaizen と同じ
-                    mask_task = np.isin(targets, np.array(task))
+                    # task は [クラスID, ...] のリストか tensor を想定
+                    task_np = np.array(task, dtype=np.int64)
+                    mask_task = np.isin(targets, task_np)
                     if mask_task.sum() == 0:
                         continue
                     correct_task = np.logical_and(mask_task, mask_correct).sum()
                     log[f"val_acc1_task{task_idx}"] = correct_task / mask_task.sum()
 
+            # ★domain split の場合（必要なら）
             if self.split_strategy == "domain" and self.tasks is None:
                 domains = [o["domains"] for o in outs]
                 domains = np.array(functools.reduce(operator.iconcat, domains, []))
@@ -212,25 +213,22 @@ class LinearTPNModel(pl.LightningModule):
                     correct_domain = np.logical_and(mask_domain, mask_correct).sum()
                     log[f"val_acc1_{domain}_{task_idx}"] = correct_domain / mask_domain.sum()
 
-        # ★ まとめて log_dict するのが本家スタイル
-        self.log_dict(log, sync_dist=True)
+            # ★過去タスク累積（必要な場合だけ）
+            if self.past_task_loaders:
+                for task_idx, loader in enumerate(self.past_task_loaders):
+                    if task_idx > self.task_idx:
+                        continue
+                    preds_list, targets_list = [], []
+                    for batch in loader:
+                        _, _, _, _, logits = self.shared_step(batch, 0)
+                        preds_list.append(logits.argmax(dim=1).cpu().numpy())
+                        targets_list.append(batch[-1].cpu().numpy())
+                    if not preds_list:
+                        continue
+                    preds_past = np.concatenate(preds_list)
+                    targets_past = np.concatenate(targets_list)
+                    cum_acc = (preds_past == targets_past).sum() / len(targets_past)
+                    log[f"cum_acc_task{task_idx}"] = float(cum_acc)
 
-            if hasattr(self, "past_task_loaders") and self.past_task_loaders:
-            current_task_idx = self.task_idx
-            for task_idx, loader in enumerate(self.past_task_loaders):
-                if task_idx > current_task_idx:
-                    continue
-                preds_list, targets_list = [], []
-                for batch in loader:
-                    _, _, _, _, logits = self.shared_step(batch, 0)
-                    preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                    targets_list.append(batch[-1].cpu().numpy())
-                if not preds_list:
-                    continue
-                preds_past = np.concatenate(preds_list)
-                targets_past = np.concatenate(targets_list)
-                cum_acc = (preds_past == targets_past).sum() / len(targets_past)
-                log[f"cum_acc_task{task_idx}"] = float(cum_acc)
-
-        # 最後にまとめてログ
+        # ★最後にまとめてログ → val_acc1_taskX / cum_acc_taskX も CSV に出る
         self.log_dict(log, sync_dist=True)
