@@ -162,6 +162,9 @@ class LinearTPNModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if batch_idx == 0:
+            print("[DEBUG] LinearTPNModel validation_step called", flush=True)
+            
         batch_size, loss, acc1, acc5, logits = self.shared_step(batch, batch_idx)
         results = {
             "batch_size": batch_size,
