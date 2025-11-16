@@ -185,15 +185,39 @@ class BaseModel(pl.LightningModule):
 
         # バックボーンモデルをTPNに変更
         from kaizen.methods.tpn import TPN
-        assert encoder in ["tpn"]
-        self.encoder = TPN(in_channels=3, feature_dim=128)
-        self.features_dim = self.encoder.features_dim
+        from torchvision.models import resnet18, resnet50  # 使うなら
 
-        # remove fc layer
-        self.encoder.fc = nn.Identity()
-        if cifar:
-            self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
-            self.encoder.maxpool = nn.Identity()
+        SUPPORTED_NETWORKS = ["resnet18", "resnet50", "tpn"]
+        assert encoder in SUPPORTED_NETWORKS, f"Unsupported encoder: {encoder}"
+        self.encoder_name = encoder  # 後で分岐に使う用
+
+        if encoder == "tpn":
+            # TPN 用の工場関数
+            self.base_model = lambda zero_init_residual=False: TPN(
+                in_channels=3,
+                feature_dim=128,   # 必要なら args から取ってもOK
+            )
+        else:
+            # ResNet 用の工場関数（元々のコード）
+            self.base_model = {"resnet18": resnet18, "resnet50": resnet50}[encoder]
+
+        # 実際の encoder を一つ作る
+        self.encoder = self.base_model(zero_init_residual=self.zero_init_residual)
+
+        # features_dim の設定と ResNet 用の特殊処理
+        if encoder in ["resnet18", "resnet50"]:
+            # ResNet は inplanes を特徴次元として使う実装だった
+            self.features_dim = self.encoder.inplanes
+
+            # fc を消して GlobalAvgPool 出力を features として使う（元の Kaizen 実装）
+            self.encoder.fc = nn.Identity()
+            if cifar:
+                self.encoder.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1)
+                self.encoder.maxpool = nn.Identity()
+
+        elif encoder == "tpn":
+            # TPN 側で self.features_dim / self.feature_dim を定義済みとする
+            self.features_dim = self.encoder.features_dim
 
         # self.online_eval_classifier = nn.Linear(self.features_dim, num_classes)
         self.online_eval_classifier = MultiLayerClassifier(self.features_dim, num_classes, self.online_evaluation_classifier_layers)
