@@ -881,15 +881,36 @@ class BaseMomentumModel(BaseModel):
                 acc@5 of the momentum encoder / classifier.
         """
 
+        # === ここから追加: targets を 1D クラスインデックスに揃える ===
+        if isinstance(targets, torch.Tensor):
+            # 例: [B, 1] -> [B]
+            if targets.ndim > 1 and targets.shape[-1] == 1:
+                targets = targets.view(-1)
+
+            # 例: one-hot [B, C] -> クラスインデックス [B]
+            elif targets.ndim > 1:
+                targets = targets.argmax(dim=-1)
+        # === ここまで追加 ===
+
         out = self.base_forward_momentum(X)
 
         if self.momentum_classifier is not None:
             feats = out["feats"]
             logits = self.momentum_classifier(feats)
+
             loss = F.cross_entropy(logits, targets, ignore_index=-1)
-            acc1, acc5 = accuracy_at_k(logits, targets, top_k=(1, 5))
+
+            # クラス数が 5 未満のときに備えておく（任意だが安全）
+            top_k_max = min(5, logits.size(1))
+            acc1, acc5 = accuracy_at_k(logits, targets, top_k=(1, top_k_max))
+
             out.update(
-                {"logits": logits, "loss": loss, "acc1": acc1.detach(), "acc5": acc5.detach()}
+                {
+                    "logits": logits,
+                    "loss": loss,
+                    "acc1": acc1.detach(),
+                    "acc5": acc5.detach(),
+                }
             )
 
         return out
