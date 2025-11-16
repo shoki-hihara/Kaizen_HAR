@@ -219,7 +219,10 @@ def main():
             val_loader = None
         elif args.dataset == "wisdm2019":
             # HAR 用 pretrain では画像用の分類 val_loader は使わない
-            val_loader = None
+            if args.online_eval_batch_size:
+                val_loader = online_eval_loader
+            else:
+                val_loader = None
         else:
             _, val_loader = prepare_data_classification(
                 args.dataset,
