@@ -621,17 +621,19 @@ class BaseModel(pl.LightningModule):
     
         # ----- 1) X, targets を取り出す -----
         if len(batch) == 3:
-            _, X, targets = batch        # (idx, X, y)
+            # 典型パターン: (idx, X, y)
+            _, X, targets = batch
         elif len(batch) == 2:
-            X, targets = batch           # (X, y)
+            # たまに (X, y) だけのパターンもある
+            X, targets = batch
         else:
-            # 想定外の形式なら明示的にエラーにしておく
+            # 想定外の形式は明示的に落とす
             raise ValueError(f"Unexpected batch format in validation_step: len(batch)={len(batch)}")
     
         # ----- 2) batch_size を必ずここで定義 -----
         batch_size = X.size(0)
     
-        metrics = {
+        metrics: Dict[str, Any] = {
             "batch_size": batch_size,
             "targets": targets,
         }
@@ -646,11 +648,13 @@ class BaseModel(pl.LightningModule):
                 classifier_outs = self._classifier_partial_step(feats["feats"], targets)
             classifier_outs = {"classifier_" + k: v for k, v in classifier_outs.items()}
     
-            metrics.update({
-                "val_classifier_loss": classifier_outs["classifier_loss"],
-                "val_classifier_acc1": classifier_outs["classifier_acc1"],
-                "val_classifier_acc5": classifier_outs["classifier_acc5"],
-            })
+            metrics.update(
+                {
+                    "val_classifier_loss": classifier_outs["classifier_loss"],
+                    "val_classifier_acc1": classifier_outs["classifier_acc1"],
+                    "val_classifier_acc5": classifier_outs["classifier_acc5"],
+                }
+            )
             model_outs.update(classifier_outs)
     
         if not self.disable_knn_eval and not self.trainer.sanity_checking:
@@ -659,21 +663,23 @@ class BaseModel(pl.LightningModule):
         if self.split_strategy == "domain" and len(batch) == 3:
             metrics["domains"] = batch[0]
     
-        # NOTE: 属性名が `self.online_eval` になっているので、
-        # hparams 側は `online_evaluation` でも、ここは `online_eval` を見る仕様のようです。
+        # NOTE: 属性名が self.online_eval なので、ここは self.online_eval を見るのが正解
         if self.online_eval:
             with torch.no_grad():
                 outs_online_eval = self._online_eval_shared_step(X, targets)
             outs_online_eval = {"online_eval_" + k: v for k, v in outs_online_eval.items()}
     
-            metrics.update({
-                "val_online_eval_loss": outs_online_eval["online_eval_loss"],
-                "val_online_eval_acc1": outs_online_eval["online_eval_acc1"],
-                "val_online_eval_acc5": outs_online_eval["online_eval_acc5"],
-            })
+            metrics.update(
+                {
+                    "val_online_eval_loss": outs_online_eval["online_eval_loss"],
+                    "val_online_eval_acc1": outs_online_eval["online_eval_acc1"],
+                    "val_online_eval_acc5": outs_online_eval["online_eval_acc5"],
+                }
+            )
             model_outs.update(outs_online_eval)
     
         return {**metrics, **model_outs}
+
 
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
