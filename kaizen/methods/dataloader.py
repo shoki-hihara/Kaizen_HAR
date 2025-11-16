@@ -1,4 +1,3 @@
-# my_har_dataloader.py
 import os
 import numpy as np
 import torch
@@ -26,6 +25,16 @@ class WISDMDataset(Dataset):
         # torch.tensor化
         self.X = torch.tensor(self.X, dtype=torch.float32)
         self.y = torch.tensor(self.y, dtype=torch.long)
+
+        # 🔸 Kaizen の split_dataset 等が期待する属性を追加
+        # クラス数（WISDM2019 は 18 クラス想定）
+        self.num_classes = 18
+
+        # クラス一覧：中身は index でも class name でも良い。長さが18あればOK
+        self.classes = list(range(self.num_classes))
+
+        # torchvision の Dataset 互換のために targets を用意
+        self.targets = self.y
 
     def __len__(self):
         return len(self.X)
