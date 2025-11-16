@@ -448,6 +448,14 @@ class BaseModel(pl.LightningModule):
             Dict: dict containing the classification loss, logits, features, acc@1 and acc@5
         """
 
+        if targets.ndim > 1 and targets.shape[-1] == 1:
+            targets = targets.view(-1)
+
+        # 例: one-hot [B, num_classes] -> クラスインデックス [B]
+        elif targets.ndim > 1:
+            targets = targets.argmax(dim=-1)
+        # ==== ここまで追加 ====
+
         with torch.no_grad():
             outs = self.base_forward(X)
         feats = outs["feats"].detach()
