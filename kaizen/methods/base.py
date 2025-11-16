@@ -476,8 +476,16 @@ class BaseModel(pl.LightningModule):
         Returns:
             Dict: dict containing the classification loss, logits, features, acc@1 and acc@5
         """
+        if targets.ndim > 1 and targets.shape[-1] == 1:
+            targets = targets.view(-1)
+
+        # 例: one-hot [B, num_classes] -> クラスインデックス [B]
+        elif targets.ndim > 1:
+            targets = targets.argmax(dim=-1)
+        # ==== ここまで追加 ====
+
         logits = self.classifier(feats)
-        
+
         loss = F.cross_entropy(logits, targets, ignore_index=-1)
         # handle when the number of classes is smaller than 5
         top_k_max = min(5, logits.size(1))
