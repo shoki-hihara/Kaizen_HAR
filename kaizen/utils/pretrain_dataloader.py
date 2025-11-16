@@ -146,6 +146,15 @@ def direct_prepare_split_dataset_subset(dataset: str,
         else:
             dataset_class = ImageFolder
         dataset = dataset_with_index(dataset_class)(train_dir, None) # task_transform)
+
+    elif dataset == "wisdm2019":
+    # WISDMDataset(root, split="train", transform=None, target_transform=None)
+    dataset = WISDMDataset(
+        root=data_dir,
+        split="train",
+        transform=None,
+        target_transform=None,
+    )
     
     clean_replay_dataset = split_dataset_subset(
         dataset=dataset, 
