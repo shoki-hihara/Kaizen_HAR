@@ -501,13 +501,35 @@ class BaseModel(pl.LightningModule):
             Dict[str, Any]: dict with the classification loss, features and logits
         """
 
-        _, X_task, targets_task = batch[f"task{self.current_task_idx}"]
+        task_batch = batch[f"task{self.current_task_idx}"]
+
+        # task_batch の中身が (idx, X, y) なのか (X, y) なのかを吸収
+        if len(task_batch) == 3:
+            _, X_task, targets_task = task_batch
+        elif len(task_batch) == 2:
+            X_task, targets_task = task_batch
+        else:
+            raise ValueError(
+                f"Unexpected task batch format (len={len(task_batch)}): {type(task_batch)}"
+            )
+
         X_task = [X_task] if isinstance(X_task, torch.Tensor) else X_task
+        
         # check that we received the desired number of crops
         assert len(X_task) == self.num_crops + self.num_small_crops
 
         if "replay" in batch:
-            *_, X_replay, targets_replay = batch["replay"]
+            replay_batch = batch["replay"]
+
+            if len(replay_batch) == 3:
+                _, X_replay, targets_replay = replay_batch
+            elif len(replay_batch) == 2:
+                X_replay, targets_replay = replay_batch
+            else:
+                raise ValueError(
+                    f"Unexpected replay batch format (len={len(replay_batch)}): {type(replay_batch)}"
+                )
+
             X_task = [torch.cat([x_t, x_r]) for x_t, x_r in zip(X_task, X_replay)]
             targets_task = torch.cat([targets_task, targets_replay])
 
@@ -579,8 +601,12 @@ class BaseModel(pl.LightningModule):
                 the classification loss and accuracies
         """
         
-        *_, X, targets = batch
-        batch_size = targets.size(0)
+        if len(batch) == 3:
+            _, X, targets = batch
+        elif len(batch) == 2:
+            X, targets = batch
+        else:
+            batch_size = targets.size(0)
         metrics = {
             "batch_size": batch_size,
             "targets": targets,
@@ -865,7 +891,16 @@ class BaseMomentumModel(BaseModel):
 
         outs_parent = super().training_step(batch, batch_idx)
 
-        _, X_task, _ = batch[f"task{self.current_task_idx}"]
+        task_batch = batch[f"task{self.current_task_idx}"]
+        if len(task_batch) == 3:
+            _, X_task, _ = task_batch
+        elif len(task_batch) == 2:
+            X_task, _ = task_batch
+        else:
+            raise ValueError(
+                f"Unexpected task batch format (len={len(task_batch)}): {type(task_batch)}"
+            )
+
         X_task = [X_task] if isinstance(X_task, torch.Tensor) else X_task
 
         # remove small crops
@@ -880,7 +915,16 @@ class BaseMomentumModel(BaseModel):
         outs_task = {"momentum_" + k: [out[k] for out in outs_task] for k in outs_task[0].keys()}
 
         if self.online_eval:
-            *_, X_online_eval, targets_online_eval = batch["online_eval"]
+            online_batch = batch["online_eval"]
+
+            if len(online_batch) == 3:
+                _, X_online_eval, targets_online_eval = online_batch
+            elif len(online_batch) == 2:
+                X_online_eval, targets_online_eval = online_batch
+            else:
+                raise ValueError(
+                    f"Unexpected online_eval batch format (len={len(online_batch)}): {type(online_batch)}"
+                )
 
             # forward online eval images and calculate online eval loss
             outs_online_eval = self._online_eval_shared_step_momentum(
@@ -955,8 +999,12 @@ class BaseMomentumModel(BaseModel):
         if self.online_eval:
             parent_metrics = super().validation_step(batch, batch_idx)
 
-            *_, X, targets = batch
-            batch_size = targets.size(0)
+            if len(batch) == 3:
+                _, X, targets = batch
+            elif len(batch) == 2:
+                X, targets = batch
+            else:
+                batch_size = targets.size(0)
 
             out = self._online_eval_shared_step_momentum(X, targets)
 
