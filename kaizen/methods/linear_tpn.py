@@ -44,8 +44,12 @@ class LinearTPNModel(pl.LightningModule):
             for p in self.backbone.parameters():
                 p.requires_grad = True
 
-        # CLI引数をまとめて保持
-        self.hparams.update(kwargs)
+        self.tasks = tasks
+        self.split_strategy = split_strategy
+        self.task_idx = task_idx
+
+        # CLI引数をまとめて保持（backbone 等は除外してもOK）
+        self.save_hyperparameters(ignore=["backbone", "classifier", "past_task_loaders"])
 
         self.domains = ["real", "quickdraw", "painting", "sketch", "infograph", "clipart"]
         self.past_task_loaders = past_task_loaders
@@ -171,38 +175,48 @@ class LinearTPNModel(pl.LightningModule):
         return results
 
     def validation_epoch_end(self, outs: List[Dict[str, Any]]):
-        if self.trainer.sanity_checking:
-            return
-    
-        # 現タスク全体の集計
+        # sanity check 中はスキップ（ここは今の実装のままでOK）
         val_loss = weighted_mean(outs, "val_loss", "batch_size")
         val_acc1 = weighted_mean(outs, "val_acc1", "batch_size")
         val_acc5 = weighted_mean(outs, "val_acc5", "batch_size")
-        self.log_dict({"val_loss": val_loss, "val_acc1": val_acc1, "val_acc5": val_acc5},
-                      on_epoch=True, sync_dist=True)
-    
-        # 現タスク・過去タスク別評価
-        preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
-        targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
-        mask_correct = preds == targets
-    
-        tasks = getattr(self.hparams, "tasks", None)
-        current_task_idx = getattr(self.hparams, "task_idx", 0)
-    
-        if tasks is not None:
-            for task_idx, task in enumerate(tasks):
-                if task_idx > current_task_idx:
-                    continue
-                mask_task = np.isin(targets, np.array(task))
-                if mask_task.sum() == 0:
-                    continue
-                acc_task = np.logical_and(mask_task, mask_correct).sum() / mask_task.sum()
-                # 個別にログして CSV に残す
-                self.log(f"val_acc1_task{task_idx}", float(acc_task),
-                         on_epoch=True, sync_dist=True)
-    
-        # 過去タスク累積評価
-        if hasattr(self, "past_task_loaders") and self.past_task_loaders:
+
+        # まずは全体のログ
+        log: Dict[str, Any] = {
+            "val_loss": val_loss,
+            "val_acc1": val_acc1,
+            "val_acc5": val_acc5,
+        }
+
+        if not self.trainer.sanity_checking:
+            preds = torch.cat([o["logits"].max(-1)[1] for o in outs]).cpu().numpy()
+            targets = torch.cat([o["targets"] for o in outs]).cpu().numpy()
+            mask_correct = preds == targets
+
+            # ★ split_strategy / tasks は self 属性から取る
+            if self.split_strategy == "class" and self.tasks is not None:
+                for task_idx, task in enumerate(self.tasks):
+                    # ここも元 Kaizen と同じ
+                    mask_task = np.isin(targets, np.array(task))
+                    if mask_task.sum() == 0:
+                        continue
+                    correct_task = np.logical_and(mask_task, mask_correct).sum()
+                    log[f"val_acc1_task{task_idx}"] = correct_task / mask_task.sum()
+
+            if self.split_strategy == "domain" and self.tasks is None:
+                domains = [o["domains"] for o in outs]
+                domains = np.array(functools.reduce(operator.iconcat, domains, []))
+                for task_idx, domain in enumerate(self.domains):
+                    mask_domain = np.isin(domains, np.array([domain]))
+                    if mask_domain.sum() == 0:
+                        continue
+                    correct_domain = np.logical_and(mask_domain, mask_correct).sum()
+                    log[f"val_acc1_{domain}_{task_idx}"] = correct_domain / mask_domain.sum()
+
+        # ★ まとめて log_dict するのが本家スタイル
+        self.log_dict(log, sync_dist=True)
+
+            if hasattr(self, "past_task_loaders") and self.past_task_loaders:
+            current_task_idx = self.task_idx
             for task_idx, loader in enumerate(self.past_task_loaders):
                 if task_idx > current_task_idx:
                     continue
@@ -216,66 +230,7 @@ class LinearTPNModel(pl.LightningModule):
                 preds_past = np.concatenate(preds_list)
                 targets_past = np.concatenate(targets_list)
                 cum_acc = (preds_past == targets_past).sum() / len(targets_past)
-                # 個別にログして CSV に残す
-                self.log(f"cum_acc_task{task_idx}", float(cum_acc),
-                         on_epoch=True, sync_dist=True)
+                log[f"cum_acc_task{task_idx}"] = float(cum_acc)
 
-    
-    
-    def evaluate_past_tasks(self):
-        if not hasattr(self, "past_task_loaders") or not self.past_task_loaders:
-            print("[INFO] No past tasks to evaluate.")
-            return
-    
-        all_logs = []
-        current_task_idx = getattr(self.hparams, "task_idx", 0)
-    
-        for task_idx, loader in enumerate(self.past_task_loaders):
-            if task_idx > current_task_idx:
-                continue
-    
-            preds_list, targets_list = [], []
-            try:
-                for batch in loader:
-                    _, _, _, _, logits = self.shared_step(batch, 0)
-                    preds_list.append(logits.argmax(dim=1).cpu().numpy())
-                    targets_list.append(batch[-1].cpu().numpy())
-            except Exception as e:
-                print(f"[WARN] Skipping Task {task_idx} due to error: {e}")
-                continue
-    
-            if not preds_list:
-                continue
-    
-            preds = np.concatenate(preds_list)
-            targets = np.concatenate(targets_list)
-            acc = float((preds == targets).sum() / len(targets))
-    
-            print(f"[INFO] Validation accuracy for Task {task_idx}: {acc:.4f}")
-    
-            # self.log(...) はやめる
-            all_logs.append({
-                f"val_acc1_task{task_idx}": acc,
-                f"cum_acc_task{task_idx}": acc,
-            })
-    
-        if not all_logs:
-            print("[INFO] No evaluation logs to record.")
-            return
-    
-        # logger 経由で time-series として記録（任意）
-        logger = getattr(self, "logger", None)
-        if isinstance(logger, WandbLogger):
-            # まとめて1ステップ分としてログ
-            merged = {}
-            for d in all_logs:
-                merged.update(d)
-            logger.experiment.log(merged, step=self.global_step)
-    
-        # 2-2) summary にも反映（Runs Table / CSV に必ず出る）
-        import wandb
-        if wandb.run is not None:
-            for d in all_logs:
-                for k, v in d.items():
-                    wandb.run.summary[k] = v
-            print("[INFO] WandB summary updated — values will appear in Runs Table.")
+        # 最後にまとめてログ
+        self.log_dict(log, sync_dist=True)
