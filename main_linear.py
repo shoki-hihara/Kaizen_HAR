@@ -6,7 +6,6 @@ import torch.nn as nn
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.plugins import DDPPlugin
 from torchvision.models import resnet18, resnet50
 
 from kaizen.args.setup import parse_args_linear
@@ -165,7 +164,6 @@ def main():
             args,
             logger=wandb_logger,
             callbacks=callbacks,
-            plugins=DDPPlugin(find_unused_parameters=True),
             checkpoint_callback=False,
             terminate_on_nan=True,
             accelerator="ddp",
