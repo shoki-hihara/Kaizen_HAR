@@ -5,6 +5,7 @@ import argparse
 from datetime import datetime
 import inspect
 import shutil
+import glob
 
 
 from main_continual import str_to_dict
@@ -18,6 +19,9 @@ parser.add_argument("--gpu", type=str, default="v100-16g")
 parser.add_argument("--num_gpus", type=int, default=2)
 parser.add_argument("--hours", type=int, default=20)
 parser.add_argument("--requeue", type=int, default=0)
+
+parser.add_argument("--linear_script", type=str, default=None)
+parser.add_argument("--run_linear", action="store_true")
 
 args = parser.parse_args()
 
@@ -52,8 +56,47 @@ print(command)
 
 # run command
 if args.mode == "normal":
+    # ① pretrain 実行
     p = subprocess.Popen(command, shell=True, stdout=sys.stdout, stderr=sys.stdout)
-    p.wait()
+    retcode = p.wait()
+
+    if retcode != 0:
+        print(f"[ERROR] Pretrain job failed with return code {retcode}. Skip linear eval.")
+        sys.exit(retcode)
+
+    # ② linear eval 実行（オプション）
+    if args.run_linear and args.linear_script is not None:
+        print("[INFO] Pretrain finished. Starting linear evaluation for each task...")
+
+        # main_continual の CLI から num_tasks / data_dir を取り出す
+        num_tasks = int(command_args.get("--num_tasks", 1))
+        data_dir = command_args.get("--data_dir", None)
+
+        for task in range(num_tasks):
+            # 対象タスクの ckpt を探索
+            ckpt_pattern = os.path.join(full_experiment_dir, f"task{task}", "*.ckpt")
+            ckpt_list = sorted(glob.glob(ckpt_pattern))
+            if not ckpt_list:
+                print(f"[WARN] No checkpoint found for task{task} in {ckpt_pattern}. Skipping.")
+                continue
+
+            ckpt = ckpt_list[-1]
+            print(f"[INFO] Task {task}: using ckpt = {ckpt}")
+
+            # main_linear.sh に渡す環境変数をセット
+            env = os.environ.copy()
+            env["TASK"] = str(task)
+            if data_dir is not None:
+                env["DATA_DIR"] = data_dir
+            env["CKPT"] = ckpt
+
+            linear_cmd = f"bash {args.linear_script}"
+            print(f"[INFO] Running linear eval: {linear_cmd}")
+            lp = subprocess.Popen(linear_cmd, shell=True,
+                                  stdout=sys.stdout, stderr=sys.stdout, env=env)
+            lp.wait()
+
+        print("[INFO] All linear evaluations finished.")
 
 elif args.mode == "slurm":
     # infer qos
