@@ -44,6 +44,13 @@ def _fixed_wisdm_tasks():
 def main():
     args = parse_args_linear()
 
+    if not hasattr(args, "replay"):
+        args.replay = False
+    if not hasattr(args, "replay_proportion"):
+        args.replay_proportion = 0.0
+    if not hasattr(args, "replay_batch_size"):
+        args.replay_batch_size = 0
+
     # ==========================
     # 0️⃣ タスク分割の設定
     # ==========================
