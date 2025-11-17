@@ -137,6 +137,7 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
     parser.add_argument("--name", type=str, default=None)
     parser.add_argument("--project", type=str, default=None)
     parser.add_argument("--entity", type=str, default=None)
+    parser.add_argument("--offline", action="store_true", help="Run wandb in offline mode (no cloud sync).")
 
     # 既存：pretrained_feature_extractor
     parser.add_argument("--pretrained_feature_extractor", type=str)
