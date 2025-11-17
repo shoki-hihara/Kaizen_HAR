@@ -40,14 +40,15 @@ class LinearTPNModel(pl.LightningModule):
         self.classifier = nn.Linear(output_dim, num_classes)
 
         # freeze_backbone を kwargs から取得
-        freeze_backbone = kwargs.get("freeze_backbone", False)
-        if not freeze_backbone:
-            for p in self.backbone.parameters():
-                p.requires_grad = True
+        freeze_backbone = kwargs.get("freeze_backbone", True)
+        
+        # True → 凍結、False → 学習する
+        for p in self.backbone.parameters():
+            p.requires_grad = not freeze_backbone
 
-        self.tasks = tasks
-        self.split_strategy = split_strategy
-        self.task_idx = task_idx
+        self.tasks       = kwargs.get("tasks", None)
+        self.split_strategy = kwargs.get("split_strategy", "class")
+        self.task_idx    = kwargs.get("task_idx", 0)
 
         # hparams 保存（backbone など学習不要なものは無視）
         self.save_hyperparameters(ignore=["backbone", "classifier", "past_task_loaders"])
@@ -141,7 +142,11 @@ class LinearTPNModel(pl.LightningModule):
 
 
     def shared_step(self, batch: Tuple, batch_idx: int):
-        *_, X, target = batch
+        if len(batch) == 2:
+            X, target = batch
+        else:
+            *_, X, target = batch
+            
         batch_size = X.size(0)
     
         # GPU に移動
