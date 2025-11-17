@@ -144,7 +144,7 @@ def main():
                 name=args.name,
                 project=args.project,
                 entity=args.entity,
-                offline=args.offline,
+                offline=getattr(args, "offline", False),
             )
             wandb_logger.watch(model, log="gradients", log_freq=100)
             wandb_logger.log_hyperparams(args)
