@@ -23,7 +23,7 @@ class TPN(nn.Module):
         self.bn2 = nn.BatchNorm1d(128)
         self.pool = nn.AdaptiveAvgPool1d(1)
         self.fc = nn.Linear(128, feature_dim)
-        self.feature_dim = feature_dim
+        self.features_dim = feature_dim
 
     def forward(self, x):
         """
