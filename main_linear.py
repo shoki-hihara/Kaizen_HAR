@@ -124,6 +124,7 @@ def main():
         replay_proportion = getattr(args, "replay_proportion", 0.0)
         replay_batch_size = getattr(args, "replay_batch_size", 0)
 
+        model_kwargs = vars(args).copy()
         model_kwargs.pop("num_classes", None)
 
         # --- LinearTPNModel 構築 ---
@@ -133,7 +134,7 @@ def main():
             past_task_loaders=past_task_loaders,
             tasks=tasks,
             freeze_backbone=True,   # 純粋な線形評価
-            **vars(args),
+            **model_kwargs,
         )
 
         # --- コールバック / ロガー ---
