@@ -120,6 +120,10 @@ def main():
         # 過去タスク用 loader 一覧（累積 Acc 用）
         past_task_loaders = [test_loaders[f"task{i}"] for i in range(task_idx + 1)]
 
+        replay = getattr(args, "replay", False)
+        replay_proportion = getattr(args, "replay_proportion", 0.0)
+        replay_batch_size = getattr(args, "replay_batch_size", 0)
+
         # --- LinearTPNModel 構築 ---
         model = LinearTPNModel(
             backbone=tpn_backbone,
