@@ -68,7 +68,7 @@ class LinearTPNModel(pl.LightningModule):
         parser.add_argument("--scheduler", choices=[
             "reduce", "cosine", "warmup_cosine", "step", "exponential", "none"
         ], default="reduce")
-        parser.add_argument("--lr_decay_steps", default=None, type=int, nargs="+")
+        parser.add_argument("--lr_decay_steps", default=None, type=float, nargs="+")
 
         return parent_parser
 
@@ -131,7 +131,11 @@ class LinearTPNModel(pl.LightningModule):
                 "frequency": 1,
             }
         elif scheduler_name == "step":
-            scheduler = MultiStepLR(optimizer, lr_decay_steps, gamma=0.1)
+            if lr_decay_steps is None:
+                raise ValueError("scheduler='step' を使う場合は --lr_decay_steps を指定してください")
+            # float → int に丸める（小数が来ても強制的に整数にする）
+            milestones = [int(s) for s in lr_decay_steps]
+            scheduler = MultiStepLR(optimizer, milestones, gamma=0.1)
         elif scheduler_name == "exponential":
             scheduler = ExponentialLR(optimizer, 0.95)
         else:
