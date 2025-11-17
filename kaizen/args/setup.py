@@ -17,6 +17,8 @@ except ImportError:
 else:
     _umap_available = True
 
+print("[DEBUG] kaizen.args.setup loaded from:", __file__)
+
 def parse_args_pretrain(input_args=None) -> argparse.Namespace:
     """Parses dataset, augmentation, pytorch lightning, model specific and additional args.
 
