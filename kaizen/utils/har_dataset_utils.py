@@ -11,38 +11,38 @@ def prepare_task_datasets(
     replay=False,
     replay_proportion=0.01,
 ):
-    """
-    Kaizen の「class incremental」に合わせて
-    WISDM データを task ごとに分割してロードするためのユーティリティ。
-    
-    タスクごとに：
-        train_task{i}, test_task{i} の DataLoader を返す。
-    """
-
-    # --------------------------
-    # 1) train/test データ読み込み
-    # --------------------------
     train_dataset = load_wisdm_dataset(data_dir, split="train")
     test_dataset  = load_wisdm_dataset(data_dir, split="test")
 
-    # --------------------------
-    # 2) タスク i のクラスリスト
-    # --------------------------
-    task_classes = tasks[task_idx]  # e.g., [17, 2, 0]
+    task_classes = tasks[task_idx]  # 例: [17, 2, 0]
     task_classes = set(task_classes)
 
-    # --------------------------
-    # 3) タスク i に対応するサブセット生成
-    # --------------------------
-    train_indices = [i for i, y in enumerate(train_dataset.targets) if y.item() in task_classes]
-    test_indices  = [i for i, y in enumerate(test_dataset.targets)  if y.item() in task_classes]
+    # ======== ここからデバッグログ =========
+    unique_train = sorted({int(y) for y in train_dataset.targets})
+    unique_test  = sorted({int(y) for y in test_dataset.targets})
+
+    print(f"[DEBUG][HAR] Task {task_idx} classes: {sorted(task_classes)}")
+    print(f"[DEBUG][HAR] Unique train targets: {unique_train}")
+    print(f"[DEBUG][HAR] Unique test targets : {unique_test}")
+    # ======== ここまでデバッグログ =========
+
+    train_indices = [i for i, y in enumerate(train_dataset.targets) if int(y) in task_classes]
+    test_indices  = [i for i, y in enumerate(test_dataset.targets)  if int(y) in task_classes]
+
+    print(f"[DEBUG][HAR] #train indices for task {task_idx}: {len(train_indices)}")
+    print(f"[DEBUG][HAR] #test indices  for task {task_idx}: {len(test_indices)}")
+
+    # 空なら明示的に落として原因がわかるようにする
+    if len(train_indices) == 0 or len(test_indices) == 0:
+        raise ValueError(
+            f"[HAR ERROR] No samples found for task {task_idx} with classes {sorted(task_classes)}. "
+            f"train unique targets={unique_train}, test unique targets={unique_test}. "
+            "クラスIDの対応（0 始まり/1 始まりなど）を確認してください。"
+        )
 
     train_subset = Subset(train_dataset, train_indices)
     test_subset  = Subset(test_dataset, test_indices)
 
-    # --------------------------
-    # 4) DataLoader を返却
-    # --------------------------
     train_loader = DataLoader(
         train_subset,
         batch_size=batch_size,
