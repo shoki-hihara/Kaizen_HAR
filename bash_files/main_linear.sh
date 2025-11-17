@@ -19,7 +19,7 @@ python3 main_linear.py \
     --scheduler cosine \
     --pretrained_feature_extractor $CKPT \
     --name wisdm-linear-task${TASK} \
-    --project Kaizen_HAR_LINEAR \
+    --project Kaizen_HAR_LINEAR_TEST \
     --entity crazy-sonnet-ambl \
     --wandb \
     --checkpoint_dir ./experiments/linear_eval
