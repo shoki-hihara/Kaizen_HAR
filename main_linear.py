@@ -23,10 +23,9 @@ from kaizen.utils.classification_dataloader import prepare_data
 from kaizen.utils.checkpointer import Checkpointer
 
 # ===== HAR / TPN 用の import =====
-from torch.utils.data import DataLoader, Subset
 from kaizen.methods.tpn import TPN
 from kaizen.methods.linear_tpn import LinearTPNModel
-from kaizen.methods.dataloader import load_wisdm_dataset
+from kaizen.utils.har_dataset_utils import prepare_task_datasets
 
 # ===== wisdm2019 用 固定タスク =====
 def _fixed_wisdm_tasks():
