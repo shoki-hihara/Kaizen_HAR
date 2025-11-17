@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 import pytorch_lightning as pl
 from kaizen.args.dataset import augmentations_args, dataset_args
@@ -83,10 +84,8 @@ def parse_args_pretrain(input_args=None) -> argparse.Namespace:
 
 
 def parse_args_linear(input_args=None) -> argparse.Namespace:
-    import sys
 
     # ===== 1) 元の引数リストを取得 =====
-    # input_args が指定されていればそれを使う。通常は None なので sys.argv から読む。
     if input_args is None:
         raw_args = sys.argv[1:]
     else:
@@ -99,23 +98,17 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
     skip_lr_list = False
     for a in raw_args:
         if skip_lr_list:
-            # 次のオプション(--で始まる)が出てくるまでは lr_decay_steps の値だと思って全部スキップ
             if a.startswith("--"):
                 skip_lr_list = False
-                # ここで新しいオプションに切り替わるので、通常処理に落とす
             else:
-                # まだ lr_decay_steps の値リストなのでスキップ継続
                 continue
 
-        # flag 本体を検出
         if a == "--lr_decay_steps":
             skip_lr_list = True
             continue
         if a.startswith("--lr_decay_steps="):
-            # "--lr_decay_steps=0.1" 形式も一括で無視
             continue
 
-        # それ以外はそのまま残す
         filtered_args.append(a)
 
     print("[DEBUG] filtered_args in parse_args_linear:", filtered_args)
@@ -123,18 +116,41 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
     # ===== 3) ここから通常の argparse 定義 =====
     parser = argparse.ArgumentParser()
 
+    # ★★ ここが今回の本質的な追加 ★★
+    # main_linear.sh / main_linear.py から参照されるのに、これまで未定義だった引数たち
+    parser.add_argument("--encoder", type=str, default="tpn")
+
+    parser.add_argument("--num_classes", type=int, default=18)
+    parser.add_argument("--task_idx", type=int, default=0)
+
+    parser.add_argument("--input_dim", type=int, default=3)
+    parser.add_argument("--feature_dim", type=int, default=128)
+    parser.add_argument("--num_layers", type=int, default=2)
+    parser.add_argument("--hidden_dim", type=int, default=256)
+    parser.add_argument("--dropout", type=float, default=0.0)
+
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--num_workers", type=int, default=2)
+    parser.add_argument("--weight_decay", type=float, default=1e-4)
+
+    # W&B / 実験管理系
+    parser.add_argument("--name", type=str, default=None)
+    parser.add_argument("--project", type=str, default=None)
+    parser.add_argument("--entity", type=str, default=None)
+
+    # 既存：pretrained_feature_extractor
     parser.add_argument("--pretrained_feature_extractor", type=str)
 
-    # add shared arguments
+    # 既存：データセット共通引数
     dataset_args(parser)
 
-    # add pytorch lightning trainer args
+    # 既存：PL Trainer 引数
     parser = pl.Trainer.add_argparse_args(parser)
 
-    # Linear model
+    # 既存：LinearTPNModel 固有引数（optimizer 等）
     parser = METHODS["linear_tpn"].add_model_specific_args(parser)
 
-    # --- ここで WandB 引数を追加 ---
+    # 既存：WandB フラグ
     parser.add_argument("--wandb", action="store_true")
 
     # ここで「filtered_args」を使うのが重要
@@ -156,11 +172,12 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
 
     additional_setup_linear(args)
 
-    # --- 追加修正: validation step がある場合に自動で val_dataloader を用意 ---
+    # ここは Lightning 的にはあまり意味がないので、お好みで残してOK
     if not hasattr(args, "val_dataloader") or args.val_dataloader is None:
-        args.val_dataloader = True  # True フラグを渡すだけで Trainer 側で自動対応
+        args.val_dataloader = True
 
     return args
+
 
 
 def parse_args_eval() -> argparse.Namespace:
