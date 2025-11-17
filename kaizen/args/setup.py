@@ -80,28 +80,41 @@ def parse_args_pretrain(input_args=None) -> argparse.Namespace:
     return args
 
 
-def parse_args_linear() -> argparse.Namespace:
+def parse_args_linear(input_args=None) -> argparse.Namespace:
     import sys
 
-    # ===== ① 元の sys.argv から lr_decay_steps 関係だけ取り除く =====
-    raw_args = sys.argv[1:]
-    filtered_args = []
-    skip_next = False
-    for a in raw_args:
-        if skip_next:
-            # 直前が "--lr_decay_steps" だった場合、その値をスキップ
-            skip_next = False
-            continue
+    # ===== 1) 元の引数リストを取得 =====
+    # input_args が指定されていればそれを使う。通常は None なので sys.argv から読む。
+    if input_args is None:
+        raw_args = sys.argv[1:]
+    else:
+        raw_args = list(input_args)
 
+    # ===== 2) --lr_decay_steps をまるごと削除するフィルタ =====
+    filtered_args = []
+    skip_lr_list = False
+    for a in raw_args:
+        if skip_lr_list:
+            # 次のオプション(--で始まる)が出てくるまでは lr_decay_steps の値だと思って全部スキップ
+            if a.startswith("--"):
+                skip_lr_list = False
+                # ここで新しいオプションに切り替わるので、通常処理に落とす
+            else:
+                # まだ lr_decay_steps の値リストなのでスキップ継続
+                continue
+
+        # flag 本体を検出
         if a == "--lr_decay_steps":
-            skip_next = True      # 次の1トークンも飛ばす
+            skip_lr_list = True
             continue
         if a.startswith("--lr_decay_steps="):
-            # "--lr_decay_steps=0.1" 形式も全部無視
+            # "--lr_decay_steps=0.1" 形式も一括で無視
             continue
 
+        # それ以外はそのまま残す
         filtered_args.append(a)
 
+    # ===== 3) ここから通常の argparse 定義 =====
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--pretrained_feature_extractor", type=str)
@@ -115,10 +128,10 @@ def parse_args_linear() -> argparse.Namespace:
     # Linear model
     parser = METHODS["linear_tpn"].add_model_specific_args(parser)
 
-    # --- WandB 引数 ---
+    # --- ここで WandB 引数を追加 ---
     parser.add_argument("--wandb", action="store_true")
 
-    # 🔽🔽 ここで「filtered_args」を使うのがポイント 🔽🔽
+    # ここで「filtered_args」を使うのが重要
     temp_args, _ = parser.parse_known_args(filtered_args)
 
     parser.add_argument("--save_checkpoint", action="store_true")
@@ -131,14 +144,15 @@ def parse_args_linear() -> argparse.Namespace:
     if temp_args.wandb:
         parser = Checkpointer.add_checkpointer_args(parser)
 
-    # ここも raw ではなく filtered を使う
+    # 最終的なパースも filtered_args を使う
     args, unknown_args = parser.parse_known_args(filtered_args)
     print("Unknown Args:", unknown_args)
+
     additional_setup_linear(args)
 
-    # validation 用フラグ
+    # --- 追加修正: validation step がある場合に自動で val_dataloader を用意 ---
     if not hasattr(args, "val_dataloader") or args.val_dataloader is None:
-        args.val_dataloader = True
+        args.val_dataloader = True  # True フラグを渡すだけで Trainer 側で自動対応
 
     return args
 
