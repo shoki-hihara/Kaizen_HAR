@@ -6,7 +6,7 @@ from datetime import datetime
 import inspect
 import shutil
 import glob
-
+import subprocess
 
 from main_continual import str_to_dict
 
@@ -65,38 +65,52 @@ if args.mode == "normal":
         sys.exit(retcode)
 
     # ② linear eval 実行（オプション）
-    if args.run_linear and args.linear_script is not None:
-        print("[INFO] Pretrain finished. Starting linear evaluation for each task...")
-
-        # main_continual の CLI から num_tasks / data_dir を取り出す
-        num_tasks = int(command_args.get("--num_tasks", 1))
-        data_dir = command_args.get("--data_dir", None)
-
-        for task in range(num_tasks):
-            # 対象タスクの ckpt を探索
-            ckpt_pattern = os.path.join(full_experiment_dir, f"task{task}", "*.ckpt")
-            ckpt_list = sorted(glob.glob(ckpt_pattern))
-            if not ckpt_list:
-                print(f"[WARN] No checkpoint found for task{task} in {ckpt_pattern}. Skipping.")
-                continue
-
-            ckpt = ckpt_list[-1]
-            print(f"[INFO] Task {task}: using ckpt = {ckpt}")
-
-            # main_linear.sh に渡す環境変数をセット
-            env = os.environ.copy()
-            env["TASK"] = str(task)
-            if data_dir is not None:
-                env["DATA_DIR"] = data_dir
-            env["CKPT"] = ckpt
-
-            linear_cmd = f"bash {args.linear_script}"
-            print(f"[INFO] Running linear eval: {linear_cmd}")
-            lp = subprocess.Popen(linear_cmd, shell=True,
-                                  stdout=sys.stdout, stderr=sys.stdout, env=env)
-            lp.wait()
-
-        print("[INFO] All linear evaluations finished.")
+    if getattr(args, "run_linear", False):
+        if not getattr(args, "linear_script", None):
+            print("[WARN] --run_linear が指定されていますが --linear_script がありません。linear eval はスキップします。")
+        else:
+            num_tasks = int(command_args.get("--num_tasks", 1))
+    
+            print("[INFO] Pretrain finished. Starting linear evaluation for each task...")
+    
+            for task in range(num_tasks):
+                # ① task ディレクトリを task0-v8qz7sdr なども含めて探す
+                task_dir_pattern = os.path.join(args.experiment_dir, f"task{task}*")
+                # experiment_dir は full_experiment_dir なら full_experiment_dir に合わせてください
+                task_dir_pattern = os.path.join(full_experiment_dir, f"task{task}*")
+    
+                candidate_dirs = sorted(glob.glob(task_dir_pattern))
+                if not candidate_dirs:
+                    print(f"[WARN] No task directory found for task{task} in {task_dir_pattern}. Skipping.")
+                    continue
+    
+                # 一番新しそうなディレクトリを採用（通常 1 個だけ）
+                task_dir = candidate_dirs[-1]
+    
+                # ② その中の ckpt を探す
+                ckpt_pattern = os.path.join(task_dir, "*.ckpt")
+                ckpt_files = sorted(glob.glob(ckpt_pattern))
+                if not ckpt_files:
+                    print(f"[WARN] No checkpoint found for task{task} in {ckpt_pattern}. Skipping.")
+                    continue
+    
+                ckpt_path = ckpt_files[-1]  # 最後のもの＝最新 epoch を採用
+    
+                print(f"[INFO] Task {task} ckpt = {ckpt_path}")
+    
+                # ③ 環境変数で main_linear.sh に渡す
+                env = os.environ.copy()
+                # DATA_DIR がすでに export されている前提だが、念のため command_args 側も fallback に
+                if "DATA_DIR" not in env and "--data_dir" in command_args:
+                    env["DATA_DIR"] = command_args["--data_dir"]
+                env["CKPT"] = ckpt_path
+                env["TASK"] = str(task)
+    
+                linear_cmd = f"bash {args.linear_script}"
+                print(f"[INFO] Running linear eval for task{task} ...")
+                subprocess.run(linear_cmd, shell=True, env=env, check=True)
+    
+            print("[INFO] All linear evaluations finished.")
 
 elif args.mode == "slurm":
     # infer qos
