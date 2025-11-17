@@ -118,6 +118,8 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
         # それ以外はそのまま残す
         filtered_args.append(a)
 
+    print("[DEBUG] filtered_args in parse_args_linear:", filtered_args)
+
     # ===== 3) ここから通常の argparse 定義 =====
     parser = argparse.ArgumentParser()
 
