@@ -124,6 +124,8 @@ def main():
         replay_proportion = getattr(args, "replay_proportion", 0.0)
         replay_batch_size = getattr(args, "replay_batch_size", 0)
 
+        model_kwargs.pop("num_classes", None)
+
         # --- LinearTPNModel 構築 ---
         model = LinearTPNModel(
             backbone=tpn_backbone,
