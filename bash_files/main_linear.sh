@@ -23,7 +23,7 @@ python3 main_linear.py \
     --weight_decay 1e-4 \
     --scheduler cosine \
     --pretrained_feature_extractor "$CKPT" \
-    --name "wisdm-linear-task${TASK}" \
+    --name "wisdm-linear" \
     --project Kaizen_HAR_LINEAR_TEST \
     --entity crazy-sonnet-ambl \
     --wandb \
