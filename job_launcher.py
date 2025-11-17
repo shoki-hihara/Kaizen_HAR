@@ -6,7 +6,6 @@ from datetime import datetime
 import inspect
 import shutil
 import glob
-import subprocess
 
 from main_continual import str_to_dict
 
