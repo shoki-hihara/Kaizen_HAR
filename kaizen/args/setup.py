@@ -92,6 +92,8 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
     else:
         raw_args = list(input_args)
 
+    print("[DEBUG] raw_args in parse_args_linear:", raw_args)
+
     # ===== 2) --lr_decay_steps をまるごと削除するフィルタ =====
     filtered_args = []
     skip_lr_list = False
