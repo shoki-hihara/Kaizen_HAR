@@ -73,8 +73,7 @@ if args.mode == "normal":
             print("[INFO] Pretrain finished. Starting linear evaluation for each task...")
     
             for task in range(num_tasks):
-                # ① task ディレクトリを task0-v8qz7sdr なども含めて探す
-                task_dir_pattern = os.path.join(args.experiment_dir, f"task{task}*")
+
                 # experiment_dir は full_experiment_dir なら full_experiment_dir に合わせてください
                 task_dir_pattern = os.path.join(full_experiment_dir, f"task{task}*")
     
