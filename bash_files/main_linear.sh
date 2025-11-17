@@ -27,4 +27,5 @@ python3 main_linear.py \
     --project Kaizen_HAR_LINEAR_TEST \
     --entity crazy-sonnet-ambl \
     --wandb \
+    --offline \
     --checkpoint_dir ./experiments/linear_eval
