@@ -81,6 +81,27 @@ def parse_args_pretrain(input_args=None) -> argparse.Namespace:
 
 
 def parse_args_linear() -> argparse.Namespace:
+    import sys
+
+    # ===== ① 元の sys.argv から lr_decay_steps 関係だけ取り除く =====
+    raw_args = sys.argv[1:]
+    filtered_args = []
+    skip_next = False
+    for a in raw_args:
+        if skip_next:
+            # 直前が "--lr_decay_steps" だった場合、その値をスキップ
+            skip_next = False
+            continue
+
+        if a == "--lr_decay_steps":
+            skip_next = True      # 次の1トークンも飛ばす
+            continue
+        if a.startswith("--lr_decay_steps="):
+            # "--lr_decay_steps=0.1" 形式も全部無視
+            continue
+
+        filtered_args.append(a)
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--pretrained_feature_extractor", type=str)
@@ -94,11 +115,11 @@ def parse_args_linear() -> argparse.Namespace:
     # Linear model
     parser = METHODS["linear_tpn"].add_model_specific_args(parser)
 
-    # --- ここで WandB 引数を追加 ---
+    # --- WandB 引数 ---
     parser.add_argument("--wandb", action="store_true")
 
-    # THIS LINE IS KEY TO PULL WANDB
-    temp_args, _ = parser.parse_known_args()
+    # 🔽🔽 ここで「filtered_args」を使うのがポイント 🔽🔽
+    temp_args, _ = parser.parse_known_args(filtered_args)
 
     parser.add_argument("--save_checkpoint", action="store_true")
     parser.add_argument("--num_tasks", type=int, default=2)
@@ -110,14 +131,14 @@ def parse_args_linear() -> argparse.Namespace:
     if temp_args.wandb:
         parser = Checkpointer.add_checkpointer_args(parser)
 
-    # parse args
-    args, unknown_args = parser.parse_known_args()
+    # ここも raw ではなく filtered を使う
+    args, unknown_args = parser.parse_known_args(filtered_args)
     print("Unknown Args:", unknown_args)
     additional_setup_linear(args)
 
-    # --- 追加修正: validation step がある場合に自動で val_dataloader を用意 ---
+    # validation 用フラグ
     if not hasattr(args, "val_dataloader") or args.val_dataloader is None:
-        args.val_dataloader = True  # True フラグを渡すだけで Trainer 側で自動対応
+        args.val_dataloader = True
 
     return args
 
