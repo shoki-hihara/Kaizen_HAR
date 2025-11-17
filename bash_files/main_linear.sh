@@ -1,4 +1,8 @@
 #!/bin/bash
+echo "[DEBUG] main_linear.sh called with env: DATA_DIR=$DATA_DIR CKPT=$CKPT TASK=$TASK"
+
+set -x  # これ以降、実行されるコマンドを全部ログに出す
+
 python3 main_linear.py \
     --dataset wisdm2019 \
     --encoder tpn \
