@@ -253,6 +253,7 @@ def main():
         max_epochs=max_epochs,
         logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
+        enable_checkpointing=False,
     )
     
     if args.dali:
