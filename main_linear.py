@@ -247,19 +247,14 @@ def main():
     else:
         wandb_logger = None
 
-    for deprecated in ["checkpoint_callback"]:
-        if hasattr(args, deprecated):
-            delattr(args, deprecated)
+    max_epochs = getattr(args, "max_epochs", 100)
 
-    trainer = Trainer.from_argparse_args(
-        args,
+    trainer = Trainer(
+        max_epochs=max_epochs,
         logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
-        plugins=DDPPlugin(find_unused_parameters=True),
-        checkpoint_callback=False,
-        terminate_on_nan=True,
-        accelerator="ddp",
     )
+    
     if args.dali:
         trainer.fit(model, val_dataloaders=val_loader)
     else:
