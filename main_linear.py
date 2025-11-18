@@ -160,13 +160,16 @@ def main():
         else:
             wandb_logger = None
 
-        trainer = Trainer.from_argparse_args(
-            args,
-            logger=wandb_logger,
+        max_epochs = getattr(args, "max_epochs", 100)
+
+        trainer = Trainer(
+            max_epochs=max_epochs,
+            logger=wandb_logger if args.wandb else None,
             callbacks=callbacks,
-            checkpoint_callback=False,
-            terminate_on_nan=True,
-            accelerator="ddp",
+            enable_checkpointing=False,  # 旧 checkpoint_callback=False 相当
+            # 必要なら GPU 設定を明示したい場合はコメントアウトを外す
+            # accelerator="gpu" if torch.cuda.is_available() else "cpu",
+            # devices=1,
         )
 
         print(f"🚀 Start Linear Evaluation for WISDM Task {task_idx}")
@@ -247,15 +250,15 @@ def main():
     else:
         wandb_logger = None
 
-    max_epochs = getattr(args, "max_epochs", 100)
-
-    trainer = Trainer(
-        max_epochs=max_epochs,
+    trainer = Trainer.from_argparse_args(
+        args,
         logger=wandb_logger if args.wandb else None,
         callbacks=callbacks,
-        enable_checkpointing=False,
+        plugins=DDPPlugin(find_unused_parameters=True),
+        checkpoint_callback=False,
+        terminate_on_nan=True,
+        accelerator="ddp",
     )
-    
     if args.dali:
         trainer.fit(model, val_dataloaders=val_loader)
     else:
