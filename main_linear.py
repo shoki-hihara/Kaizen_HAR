@@ -247,6 +247,10 @@ def main():
     else:
         wandb_logger = None
 
+    for deprecated in ["checkpoint_callback"]:
+    if hasattr(args, deprecated):
+        delattr(args, deprecated)
+
     trainer = Trainer.from_argparse_args(
         args,
         logger=wandb_logger if args.wandb else None,
