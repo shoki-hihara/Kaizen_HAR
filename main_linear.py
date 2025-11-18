@@ -116,8 +116,17 @@ def main():
         train_loader = train_loaders[f"task{task_idx}"]
         val_loader = test_loaders[f"task{task_idx}"]
 
+        print(f"[DEBUG][HAR] available test loader keys: {list(test_loaders.keys())}")
+
         # 過去タスク用 loader 一覧（累積 Acc 用）
-        past_task_loaders = [test_loaders[f"task{i}"] for i in range(task_idx + 1)]
+        past_task_loaders = []
+        for i in range(task_idx + 1):
+            key = f"task{i}"
+            if key in test_loaders:
+                past_task_loaders.append(test_loaders[key])
+
+        if not past_task_loaders:
+            past_task_loaders = [val_loader]
 
         replay = getattr(args, "replay", False)
         replay_proportion = getattr(args, "replay_proportion", 0.0)
