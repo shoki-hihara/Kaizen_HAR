@@ -122,7 +122,13 @@ class LinearTPNModel(pl.LightningModule):
         elif scheduler_name == "warmup_cosine":
             scheduler = LinearWarmupCosineAnnealingLR(optimizer, 10, max_epochs)
         elif scheduler_name == "cosine":
-            scheduler = CosineAnnealingLR(optimizer, max_epochs)
+            max_epochs = self.hparams.get("max_epochs", None)
+            if not max_epochs:
+                if getattr(self, "trainer", None) is not None and self.trainer.max_epochs is not None:
+                    max_epochs = self.trainer.max_epochs
+                else:
+                    max_epochs = 100 
+            scheduler = CosineAnnealingLR(optimizer, T_max=max_epochs)
         elif scheduler_name == "reduce":
             scheduler = {
                 "scheduler": ReduceLROnPlateau(optimizer, mode="min"),
