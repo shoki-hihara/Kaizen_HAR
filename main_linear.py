@@ -140,11 +140,15 @@ def main():
         # --- コールバック / ロガー ---
         callbacks = []
         if args.wandb:
+            task_idx = getattr(args, "task_idx", 0)
+            
             wandb_logger = WandbLogger(
-                name=args.name,
+                name=f"{args.name}_task{task_idx}",
                 project=args.project,
                 entity=args.entity,
                 offline=getattr(args, "offline", False),
+                group=args.name,
+                job_type=f"linear_task{task_idx}",
             )
             wandb_logger.watch(model, log="gradients", log_freq=100)
             wandb_logger.log_hyperparams(args)
