@@ -30,7 +30,7 @@ from kaizen.utils.har_dataset_utils import prepare_task_datasets
 def _fixed_wisdm_tasks():
     task_classes = [
         [17, 2, 0],    # タスク0
-        [3, 10, 4],    # タスク1
+        [3, 10, 8],    # タスク1
         [4, 11, 16],   # タスク2
         [6, 1, 9],     # タスク3
         [7, 15, 5],    # タスク4
