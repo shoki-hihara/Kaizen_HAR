@@ -21,6 +21,8 @@ parser.add_argument("--requeue", type=int, default=0)
 
 parser.add_argument("--linear_script", type=str, default=None)
 parser.add_argument("--run_linear", action="store_true")
+parser.add_argument("--linear_max_epochs", type=int, default=100,
+                    help="Maximum number of epochs for linear evaluation.")
 
 args = parser.parse_args()
 
@@ -103,6 +105,8 @@ if args.mode == "normal":
                     env["DATA_DIR"] = command_args["--data_dir"]
                 env["CKPT"] = ckpt_path
                 env["TASK"] = str(task)
+
+                env["LINEAR_MAX_EPOCHS"] = str(args.linear_max_epochs)
     
                 linear_cmd = f"bash {args.linear_script}"
                 print(f"[INFO] Running linear eval for task{task} ...")
