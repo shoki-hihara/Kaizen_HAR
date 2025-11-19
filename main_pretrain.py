@@ -50,7 +50,7 @@ from kaizen.utils.pretrain_dataloader import (
 def _fixed_wisdm_tasks():
     task_classes = [
         [17, 2, 0],
-        [3, 10, 4],
+        [3, 10, 8],
         [4, 11, 16],
         [6, 1, 9],
         [7, 15, 5],
