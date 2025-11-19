@@ -132,6 +132,7 @@ def parse_args_linear(input_args=None) -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=2)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--max_epochs", type=int,default=100, help="Maximum number of epochs for linear evaluation.")
 
     # W&B / 実験管理系
     parser.add_argument("--name", type=str, default=None)
