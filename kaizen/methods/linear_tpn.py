@@ -234,20 +234,29 @@ class LinearTPNModel(pl.LightningModule):
 
             # ★過去タスク累積（必要な場合だけ）
             if self.past_task_loaders:
-                for task_idx, loader in enumerate(self.past_task_loaders):
-                    if task_idx > self.task_idx:
+                for past_idx, loader in enumerate(self.past_task_loaders):
+                    # 念のため「現在の task まで」に限定
+                    if past_idx > self.task_idx:
                         continue
+    
                     preds_list, targets_list = [], []
                     for batch in loader:
                         _, _, _, _, logits = self.shared_step(batch, 0)
                         preds_list.append(logits.argmax(dim=1).cpu().numpy())
                         targets_list.append(batch[-1].cpu().numpy())
+    
                     if not preds_list:
                         continue
+    
                     preds_past = np.concatenate(preds_list)
                     targets_past = np.concatenate(targets_list)
-                    cum_acc = (preds_past == targets_past).sum() / len(targets_past)
-                    log[f"cum_acc_task{task_idx}"] = float(cum_acc)
+                    acc_past = (preds_past == targets_past).sum() / len(targets_past)
+    
+                    # ✅ Kaizen 風: 各タスクの精度を val_acc1_taskX としてもログ
+                    log[f"val_acc1_task{past_idx}"] = float(acc_past)
+    
+                    # 互換のために cum_acc_taskX も残したければこちらも
+                    log[f"cum_acc_task{past_idx}"] = float(acc_past)
 
         # ★最後にまとめてログ → val_acc1_taskX / cum_acc_taskX も CSV に出る
         self.log_dict(log, sync_dist=True)
