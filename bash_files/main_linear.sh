@@ -5,6 +5,7 @@ set -x  # これ以降、実行されるコマンドを全部ログに出す
 
 python3 main_linear.py \
     --dataset wisdm2019 \
+    --max_epochs 50 \
     --encoder tpn \
     --data_dir "$DATA_DIR" \
     --split_strategy class \
