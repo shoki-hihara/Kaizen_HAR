@@ -41,6 +41,7 @@ class LinearTPNModel(pl.LightningModule):
 
         # freeze_backbone を kwargs から取得
         freeze_backbone = kwargs.get("freeze_backbone", True)
+        self.freeze_backbone = freeze_backbone
         
         # True → 凍結、False → 学習する
         for p in self.backbone.parameters():
@@ -170,16 +171,23 @@ class LinearTPNModel(pl.LightningModule):
         return batch_size, loss, acc1, acc5, logits
 
     def training_step(self, batch, batch_idx):
-        self.backbone.train()  # ★ここをeval()からtrain()に
+        if getattr(self, "freeze_backbone", True):
+            self.backbone.eval()
+        else:
+            self.backbone.train()
+
         _, loss, acc1, acc5, _ = self.shared_step(batch, batch_idx)
         log = {"train_loss": loss, "train_acc1": acc1, "train_acc5": acc5}
         self.log_dict(log, on_epoch=True, sync_dist=True, logger=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
+        if getattr(self, "freeze_backbone", True):
+            self.backbone.eval()
+
         if batch_idx == 0:
             print("[DEBUG] LinearTPNModel validation_step called", flush=True)
-            
+
         batch_size, loss, acc1, acc5, logits = self.shared_step(batch, batch_idx)
         results = {
             "batch_size": batch_size,
