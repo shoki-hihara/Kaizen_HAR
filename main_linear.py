@@ -80,11 +80,6 @@ def main():
         )
 
         # --- 事前学習済み TPN 重みをロード ---
-        assert (
-            args.pretrained_feature_extractor.endswith(".ckpt")
-            or args.pretrained_feature_extractor.endswith(".pth")
-            or args.pretrained_feature_extractor.endswith(".pt")
-        ), f"unexpected checkpoint extension: {args.pretrained_feature_extractor}"
         ckpt_path = args.pretrained_feature_extractor
         assert os.path.exists(ckpt_path), f"checkpoint not found: {ckpt_path}"
 
@@ -94,15 +89,15 @@ def main():
 
         new_state = {}
         for k, v in state.items():
-            # encoder/backbone だけ取り出して TPN にマッピング
             if k.startswith("encoder.") or k.startswith("backbone."):
                 new_k = k.replace("encoder.", "").replace("backbone.", "")
                 new_state[new_k] = v
-        missing, unexpected = tpn_backbone.load_state_dict(new_state, strict=False)
-        print(f"Loaded {ckpt_path}, missing={missing}, unexpected={unexpected}")
+        tpn_backbone.load_state_dict(new_state, strict=False)
+
+        # --- タスク index ---
+        task_idx = getattr(args, "task_idx", 0)
 
         # --- HAR 用タスク別データローダ ---
-        task_idx = getattr(args, "task_idx", 0)
         train_loaders, test_loaders = prepare_task_datasets(
             data_dir=args.data_dir,
             task_idx=task_idx,
@@ -113,35 +108,46 @@ def main():
             replay_proportion=args.replay_proportion,
         )
 
-        train_loader = train_loaders[f"task{task_idx}"]
+        # ================================
+        # ★★★ Kaizen 論文準拠の 1-head linear eval ★★★
+        # ================================
+        # Task 0〜Task k の train データを全て concat
+        from torch.utils.data import ConcatDataset, DataLoader
+
+        seen_tasks = list(range(task_idx + 1))
+        concat_train_dataset = ConcatDataset(
+            [train_loaders[f"task{i}"].dataset for i in seen_tasks]
+        )
+
+        train_loader = DataLoader(
+            concat_train_dataset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+        )
+
+        # val_loader は直近タスクの validation を使用
         val_loader = test_loaders[f"task{task_idx}"]
 
-        print(f"[DEBUG][HAR] available test loader keys: {list(test_loaders.keys())}")
+        # 過去タスク評価用
+        past_task_loaders = [test_loaders[f"task{i}"] for i in seen_tasks]
 
-        past_task_loaders = [test_loaders[f"task{i}"] for i in range(task_idx + 1)]
-
-        replay = getattr(args, "replay", False)
-        replay_proportion = getattr(args, "replay_proportion", 0.0)
-        replay_batch_size = getattr(args, "replay_batch_size", 0)
-
+        # --- モデル構築 ---
         model_kwargs = vars(args).copy()
         model_kwargs.pop("num_classes", None)
 
-        # --- LinearTPNModel 構築 ---
         model = LinearTPNModel(
             backbone=tpn_backbone,
-            num_classes=args.num_classes,
-            past_task_loaders=past_task_loaders,
-            tasks=tasks,
-            freeze_backbone=True,   # 純粋な線形評価
+            num_classes=args.num_classes,        # ★18クラス固定
+            past_task_loaders=past_task_loaders, # ★Task0〜Task k の val
+            tasks=tasks,                         # ★task_classes の定義
+            freeze_backbone=True,
             **model_kwargs,
         )
 
-        # --- コールバック / ロガー ---
+        # --- コールバック / ロガー設定 ---
         callbacks = []
         if args.wandb:
-            task_idx = getattr(args, "task_idx", 0)
-            
             wandb_logger = WandbLogger(
                 name=f"{args.name}_task{task_idx}",
                 project=args.project,
@@ -156,28 +162,17 @@ def main():
             lr_monitor = LearningRateMonitor(logging_interval="epoch")
             callbacks.append(lr_monitor)
 
-            ckpt_callback = Checkpointer(
-                args,
-                logdir=os.path.join(args.checkpoint_dir, f"linear_task{task_idx}"),
-                frequency=args.checkpoint_frequency,
-            )
-            callbacks.append(ckpt_callback)
-        else:
-            wandb_logger = None
-
-        max_epochs = getattr(args, "max_epochs", 100)
+        # --- Trainer 起動 ---
+        max_epochs = args.max_epochs
 
         trainer = Trainer(
             max_epochs=max_epochs,
             logger=wandb_logger if args.wandb else None,
             callbacks=callbacks,
-            enable_checkpointing=False,  # 旧 checkpoint_callback=False 相当
-            # 必要なら GPU 設定を明示したい場合はコメントアウトを外す
-            # accelerator="gpu" if torch.cuda.is_available() else "cpu",
-            # devices=1,
+            enable_checkpointing=False,
         )
 
-        print(f"🚀 Start Linear Evaluation for WISDM Task {task_idx}")
+        print(f"🚀 Start Kaizen-style Linear Evaluation for Task {task_idx}")
         trainer.fit(model, train_loader, val_loader)
         print(f"✅ Finished Linear Eval for WISDM Task {task_idx}")
         return
