@@ -12,6 +12,7 @@ from torch.utils.data.dataset import Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import STL10, ImageFolder
 from kaizen.methods.dataloader import WISDMDataset
+from kaizen.utils.har_transforms import Random3DRotation, RandomScaling, TimeWarp
 
 
 def split_dataset(
@@ -694,6 +695,20 @@ class MulticropCustomTransform(BaseTransform):
         )
 
 
+def _build_har_base_transform():
+    """WISDM 用の 1-view の基本変換（Scaling→Rotation→TimeWarp）"""
+    rot = Random3DRotation(max_angle=np.pi / 6)
+    scale = RandomScaling(scale_range=(0.9, 1.1))
+    warp = TimeWarp(sigma=0.2, knot=4)
+
+    def _tf(x):
+        x = scale(x)
+        x = rot(x)
+        x = warp(x)
+        return x
+
+    return _tf
+
 def prepare_transform(dataset: str, multicrop: bool = False, **kwargs) -> Any:
     """Prepares transforms for a specific dataset. Optionally uses multi crop.
 
@@ -714,10 +729,9 @@ def prepare_transform(dataset: str, multicrop: bool = False, **kwargs) -> Any:
             ImagenetTransform(**kwargs) if not multicrop else MulticropImagenetTransform(**kwargs)
         )
     elif dataset == "wisdm2019":
-        # HAR 用：まずは「そのまま返すだけ」の identity transform
-        def identity(x):
-            return x
-        return identity
+        # HAR 用：画像のような切り抜きはせず、センサ用拡張だけを定義
+        base_tf = _build_har_base_transform()
+        return base_tf
     elif dataset == "custom":
         return CustomTransform(**kwargs) if not multicrop else MulticropCustomTransform(**kwargs)
     else:
