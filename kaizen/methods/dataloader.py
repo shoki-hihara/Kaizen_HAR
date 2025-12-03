@@ -2,6 +2,7 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+from kaizen.utils.har_transforms import Random3DRotation, RandomScaling, TimeWarp
 
 class WISDMDataset(Dataset):
     def __init__(self, data_dir, split="train", transform=None):
@@ -38,10 +39,46 @@ class WISDMDataset(Dataset):
             x = self.transform(x)
         return x, y
 
+def build_har_train_transform():
+    """WISDM 用の学習時データ拡張（TPN の 3 変換）"""
+    rot = Random3DRotation(max_angle=np.pi / 6)
+    scale = RandomScaling(scale_range=(0.9, 1.1))
+    warp = TimeWarp(sigma=0.2, knot=4)
 
-def load_wisdm_dataset(data_dir, split="train"):
-    return WISDMDataset(data_dir, split=split)
+    def _transform(x):
+        # x: Tensor [T, C] など
+        x = scale(x)
+        x = rot(x)
+        x = warp(x)
+        return x
+
+    return _transform
+
+def load_wisdm_dataset(data_dir):
+    """train / val の Dataset を両方返す形にする"""
+
+    train_transform = build_har_train_transform()
+    val_transform = None  # 検証・テストでは通常、拡張なし（必要なら正規化のみ）
+
+    train_dataset = WISDMDataset(
+        data_dir=data_dir,
+        split="train",
+        transform=train_transform,
+    )
+    val_dataset = WISDMDataset(
+        data_dir=data_dir,
+        split="val",
+        transform=val_transform,
+    )
+    return train_dataset, val_dataset
 
 
 def get_dataloader(dataset, batch_size=64, shuffle=True, num_workers=2):
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=(shuffle is True),  # train では drop_last=True にすることが多い
+    )
