@@ -54,7 +54,7 @@ def build_har_train_transform():
 
     return _transform
 
-def load_wisdm_dataset(data_dir):
+def load_wisdm_dataset(data_dir, split="train", transform=None):
     """train / val の Dataset を両方返す形にする"""
 
     train_transform = build_har_train_transform()
@@ -70,7 +70,11 @@ def load_wisdm_dataset(data_dir):
         split="val",
         transform=val_transform,
     )
-    return train_dataset, val_dataset
+    return WISDMDataset(
+        data_dir=data_dir,
+        split=split,         # "train" / "val" / "test" など
+        transform=transform, # 通常 linear のときは None で OK
+    )
 
 
 def get_dataloader(dataset, batch_size=64, shuffle=True, num_workers=2):
