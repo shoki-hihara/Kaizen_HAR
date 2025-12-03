@@ -6,8 +6,9 @@ class RandomScaling:
         self.scale_range = scale_range
 
     def __call__(self, x):
-        # x: [T, C] or [C, T] の想定（WISDM の形に合わせて調整）
-        factor = torch.empty(1).uniform_(*self.scale_range)
+        if not isinstance(x, torch.Tensor):
+            x = torch.as_tensor(x)
+        factor = torch.empty(1, device=x.device, dtype=x.dtype).uniform_(*self.scale_range)
         return x * factor
 
 class Random3DRotation:
@@ -15,25 +16,49 @@ class Random3DRotation:
         self.max_angle = max_angle
 
     def __call__(self, x):
-        # x: [T, 3] を想定（加速度3軸など）
-        if x.shape[-1] != 3:
+        # x: [T, 3] or [3, T]
+        if not isinstance(x, torch.Tensor):
+            x = torch.as_tensor(x)
+
+        # 形状の解釈
+        transposed = False
+        if x.dim() == 2:
+            if x.shape[-1] == 3:      # [T, 3]
+                pass
+            elif x.shape[0] == 3:     # [3, T] を [T, 3] に変換
+                x = x.transpose(0, 1)
+                transposed = True
+            else:
+                # 3軸でない場合はそのまま返す
+                return x
+        else:
             return x
-        angle = torch.empty(3).uniform_(-self.max_angle, self.max_angle)
+
+        device = x.device
+        dtype = x.dtype
+
+        angle = torch.empty(3, device=device, dtype=dtype).uniform_(-self.max_angle, self.max_angle)
         cx, cy, cz = torch.cos(angle)
         sx, sy, sz = torch.sin(angle)
 
         Rx = torch.tensor([[1, 0, 0],
                            [0, cx, -sx],
-                           [0, sx, cx]])
-        Ry = torch.tensor([[cy, 0, sy],
-                           [0, 1, 0],
-                           [-sy, 0, cy]])
+                           [0, sx,  cx]], device=device, dtype=dtype)
+        Ry = torch.tensor([[ cy, 0, sy],
+                           [  0, 1,  0],
+                           [-sy, 0, cy]], device=device, dtype=dtype)
         Rz = torch.tensor([[cz, -sz, 0],
                            [sz,  cz, 0],
-                           [0,   0,  1]])
+                           [ 0,   0, 1]], device=device, dtype=dtype)
 
         R = Rz @ Ry @ Rx  # [3, 3]
-        return x @ R.T
+        x_rot = x @ R.T   # [T, 3]
+
+        if transposed:
+            x_rot = x_rot.transpose(0, 1)  # [3, T] に戻す
+
+        return x_rot
+
 
 class TimeWarp:
     def __init__(self, sigma=0.2, knot=4):
