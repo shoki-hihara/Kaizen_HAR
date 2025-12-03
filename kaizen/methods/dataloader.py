@@ -54,26 +54,21 @@ def build_har_train_transform():
 
     return _transform
 
+
 def load_wisdm_dataset(data_dir, split="train", transform=None):
-    """train / val の Dataset を両方返す形にする"""
+    """
+    WISDMDataset のシンプルなラッパ。
+    pretrain でも linear でも同じインターフェースで使える。
 
-    train_transform = build_har_train_transform()
-    val_transform = None  # 検証・テストでは通常、拡張なし（必要なら正規化のみ）
-
-    train_dataset = WISDMDataset(
-        data_dir=data_dir,
-        split="train",
-        transform=train_transform,
-    )
-    val_dataset = WISDMDataset(
-        data_dir=data_dir,
-        split="val",
-        transform=val_transform,
-    )
+    Args:
+        data_dir (str): /.../wisdm2019_npy
+        split (str): "train" / "val" / "test"
+        transform: データ拡張（pretrainのみ使用）
+    """
     return WISDMDataset(
         data_dir=data_dir,
-        split=split,         # "train" / "val" / "test" など
-        transform=transform, # 通常 linear のときは None で OK
+        split=split,
+        transform=transform,
     )
 
 
