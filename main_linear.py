@@ -8,6 +8,8 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from torchvision.models import resnet18, resnet50
 
+from torch.utils.data import ConcatDataset, DataLoader  # ⭐ 追加
+
 from kaizen.args.setup import parse_args_linear
 
 try:
@@ -26,6 +28,10 @@ from kaizen.methods.tpn import TPN
 from kaizen.methods.linear_tpn import LinearTPNModel
 from kaizen.utils.har_dataset_utils import prepare_task_datasets
 
+# 画像用で使っていたはずなので、元コードにあればこれも
+from pytorch_lightning.plugins import DDPPlugin
+
+
 # ===== wisdm2019 用 固定タスク =====
 def _fixed_wisdm_tasks():
     task_classes = [
@@ -43,8 +49,10 @@ def _fixed_wisdm_tasks():
 def main():
     args = parse_args_linear()
     print("[DEBUG] args keys:", vars(args).keys())
-    print(f"[DEBUG] linear lr = {args.lr}")
+    if hasattr(args, "lr"):
+        print(f"[DEBUG] linear lr = {args.lr}")
 
+    # Kaizen の古いコードとの互換用
     if not hasattr(args, "replay"):
         args.replay = False
     if not hasattr(args, "replay_proportion"):
@@ -58,10 +66,8 @@ def main():
     tasks = None
     if args.split_strategy == "class":
         if args.dataset.lower() == "wisdm2019":
-            # HAR は pretrain 側と同じ固定タスク
             tasks = _fixed_wisdm_tasks()
         else:
-            # 画像系は従来どおりランダムクラス分割
             assert args.num_classes % args.num_tasks == 0
             torch.manual_seed(args.split_seed)
             tasks = torch.randperm(args.num_classes).chunk(args.num_tasks)
@@ -72,6 +78,9 @@ def main():
     # 1️⃣ HAR (wisdm2019 + TPN) 用ブランチ
     # ==========================
     if args.dataset.lower() == "wisdm2019" and args.encoder == "tpn":
+        task_idx = getattr(args, "task_idx", 0)
+        print(f"[DEBUG] HAR linear branch: task_idx={task_idx}")
+
         # --- TPN バックボーン構築 ---
         tpn_backbone = TPN(
             input_dim=args.input_dim,
@@ -84,6 +93,7 @@ def main():
         # --- 事前学習済み TPN 重みをロード ---
         ckpt_path = args.pretrained_feature_extractor
         assert os.path.exists(ckpt_path), f"checkpoint not found: {ckpt_path}"
+        print(f"[DEBUG] load TPN ckpt from: {ckpt_path}")
 
         state = torch.load(ckpt_path, map_location="cpu")
         if "state_dict" in state:
@@ -91,13 +101,13 @@ def main():
 
         new_state = {}
         for k, v in state.items():
+            # pretrain 側のキー名に合わせて調整
             if k.startswith("encoder.") or k.startswith("backbone."):
                 new_k = k.replace("encoder.", "").replace("backbone.", "")
                 new_state[new_k] = v
-        tpn_backbone.load_state_dict(new_state, strict=False)
-
-        # --- タスク index ---
-        task_idx = getattr(args, "task_idx", 0)
+        missing, unexpected = tpn_backbone.load_state_dict(new_state, strict=False)
+        print("[DEBUG] TPN missing keys:", missing)
+        print("[DEBUG] TPN unexpected keys:", unexpected)
 
         # --- HAR 用タスク別データローダ ---
         train_loaders, test_loaders = prepare_task_datasets(
@@ -106,45 +116,42 @@ def main():
             tasks=tasks,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
-            replay=args.replay,
-            replay_proportion=args.replay_proportion,
+            replay=False,
         )
 
-        # ================================
-        # ★★★ Kaizen 論文準拠の 1-head linear eval ★★★
-        # ================================
-        # Task 0〜Task k の train データを全て concat
-        from torch.utils.data import ConcatDataset, DataLoader
+        # ① 過去タスク(0〜task_idx)の train サブセットを結合して 1 つの Dataset にする
+        seen_train_subsets = [
+            train_loaders[f"task{i}"].dataset  # 各タスクの Subset
+            for i in range(task_idx + 1)
+        ]
+        seen_train_dataset = ConcatDataset(seen_train_subsets)
 
-        seen_tasks = list(range(task_idx + 1))
-        concat_train_dataset = ConcatDataset(
-            [train_loaders[f"task{i}"].dataset for i in seen_tasks]
-        )
-
-        train_loader = DataLoader(
-            concat_train_dataset,
+        seen_train_loader = DataLoader(
+            seen_train_dataset,
             batch_size=args.batch_size,
             shuffle=True,
             num_workers=args.num_workers,
+            drop_last=False,
         )
 
-        # val_loader は直近タスクの validation を使用
-        val_loader = test_loaders[f"task{task_idx}"]
+        # ② validation 用には「タスク別のローダ」を past_task_loaders として渡す
+        past_task_loaders = [
+            test_loaders[f"task{i}"]
+            for i in range(task_idx + 1)
+        ]
+        # 「現在タスク」の validation loader は task_idx のものを使う
+        current_val_loader = test_loaders[f"task{task_idx}"]
 
-        # 過去タスク評価用
-        past_task_loaders = [test_loaders[f"task{i}"] for i in seen_tasks]
-
-        # --- モデル構築 ---
-        model_kwargs = vars(args).copy()
-        model_kwargs.pop("num_classes", None)
-
+        # ③ モデル構築
         model = LinearTPNModel(
             backbone=tpn_backbone,
             num_classes=args.num_classes,
-            past_task_loaders=past_task_loaders, # ★Task0〜Task k の val
-            tasks=tasks,                         # ★task_classes の定義
+            past_task_loaders=past_task_loaders,
+            tasks=tasks,
+            split_strategy=args.split_strategy,
+            task_idx=task_idx,
             freeze_backbone=True,
-            **model_kwargs,
+            **vars(args),   # 既存の hparams をそのまま渡す
         )
 
         # --- コールバック / ロガー設定 ---
@@ -163,21 +170,20 @@ def main():
 
             lr_monitor = LearningRateMonitor(logging_interval="epoch")
             callbacks.append(lr_monitor)
+        else:
+            wandb_logger = None
 
-        # --- Trainer 起動 ---
-        max_epochs = args.max_epochs
-
+        # --- Trainer 構築（HAR ではシンプルに） ---
         trainer = Trainer(
-            max_epochs=max_epochs,
-            logger=wandb_logger if args.wandb else None,
+            max_epochs=args.max_epochs,
+            logger=wandb_logger,
             callbacks=callbacks,
-            enable_checkpointing=False,
         )
 
-        print(f"🚀 Start Kaizen-style Linear Evaluation for Task {task_idx}")
-        trainer.fit(model, train_loader, val_loader)
+        print(f"🚀 Start Kaizen-style Linear Evaluation for WISDM Task {task_idx}")
+        trainer.fit(model, train_dataloaders=seen_train_loader, val_dataloaders=current_val_loader)
         print(f"✅ Finished Linear Eval for WISDM Task {task_idx}")
-        return
+        return  # ここで終了
 
     # ==========================
     # 2️⃣ 元の画像用ブランチ（ResNet + LinearModel）
@@ -248,7 +254,6 @@ def main():
             frequency=args.checkpoint_frequency,
         )
         callbacks.append(ckpt)
-
     else:
         wandb_logger = None
 
