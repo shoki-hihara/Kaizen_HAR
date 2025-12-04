@@ -176,9 +176,25 @@ class LinearTPNModel(pl.LightningModule):
         else:
             self.backbone.train()
 
-        _, loss, acc1, acc5, _ = self.shared_step(batch, batch_idx)
-        log = {"train_loss": loss, "train_acc1": acc1, "train_acc5": acc5}
-        self.log_dict(log, on_epoch=True, sync_dist=True, logger=True)
+        batch_size, loss, acc1, acc5, _ = self.shared_step(batch, batch_idx)
+
+        # ★ task 番号（0〜5など）
+        task = getattr(self, "task_idx", 0)
+
+        log = {
+            f"train_loss_task{task}": loss,
+            f"train_acc1_task{task}": acc1,
+            f"train_acc5_task{task}": acc5,
+        }
+
+        # 1エポック単位で平均を取りたいので on_epoch=True
+        self.log_dict(
+            log,
+            on_step=False,          # ← 明示的に False にしておくと安心
+            on_epoch=True,
+            sync_dist=True,
+            logger=True,
+        )
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -268,3 +284,21 @@ class LinearTPNModel(pl.LightningModule):
 
         # ★最後にまとめてログ → val_acc1_taskX / cum_acc_taskX も CSV に出る
         self.log_dict(log, sync_dist=True)
+
+    def on_train_epoch_start(self):
+        # Optimizer から現在の lr を取得
+        opt = self.trainer.optimizers[0]
+        lr = opt.param_groups[0]["lr"]
+        task = getattr(self, "task_idx", 0)
+
+        # print でも確認できるように
+        print(f"[DEBUG] task{task} epoch={self.current_epoch} lr={lr:.6f}", flush=True)
+
+        # W&B にもログ（エポック単位）
+        self.log(
+            f"lr_task{task}",
+            lr,
+            on_step=False,
+            on_epoch=True,
+            logger=True,
+        )
