@@ -42,6 +42,7 @@ def _fixed_wisdm_tasks():
 
 def main():
     args = parse_args_linear()
+    print(f"[DEBUG] linear lr = {args.lr}")
 
     if not hasattr(args, "replay"):
         args.replay = False
