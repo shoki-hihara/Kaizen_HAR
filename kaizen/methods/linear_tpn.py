@@ -21,38 +21,51 @@ from torch.optim.lr_scheduler import (
 
 
 class LinearTPNModel(pl.LightningModule):
-    def __init__(self, backbone: nn.Module, num_classes: int, past_task_loaders: Optional[List[DataLoader]] = None, **kwargs):
-        """TPN用のLinear評価モデル
+    def __init__(
+        self,
+        backbone: nn.Module,
+        past_task_loaders: Optional[List[DataLoader]] = None,
+        tasks=None,
+        **kwargs,
+    ):
+        """
+        TPN用のLinear評価モデル（Kaizen本家 LinearModel と同じスタイル）
 
         Args:
             backbone (nn.Module): TPN backbone
-            num_classes (int): クラス数
-            kwargs: CLIから渡されるハイパーパラメータ
+            past_task_loaders (List[DataLoader] or None): 過去タスクの val loader 群
+            tasks: class-split 用のタスク定義（list of class IDs の tuple）
+            kwargs: CLIから渡されるハイパーパラメータ（num_classes, optimizer, lr, ...）
         """
         super().__init__()
         print("[DEBUG] LinearTPNModel __init__ called", flush=True)
 
         self.backbone = backbone
-        with torch.no_grad():
-            # WISDM2019: batch=1, channels=3, seq_len=384
-            dummy = torch.randn(1, 3, 384)
-            output_dim = backbone(dummy).shape[1]  # チャンネル方向の次元を取得
-        self.classifier = nn.Linear(output_dim, num_classes)
+        self.past_task_loaders = past_task_loaders
+        self.tasks = tasks
 
-        # freeze_backbone を kwargs から取得
-        freeze_backbone = kwargs.get("freeze_backbone", True)
-        self.freeze_backbone = freeze_backbone
-        
-        # True → 凍結、False → 学習する
-        for p in self.backbone.parameters():
-            p.requires_grad = not freeze_backbone
+        # === kwargs からハイパーパラメータを取り出す ===
+        self.num_classes = kwargs.get("num_classes", None)
+        if self.num_classes is None:
+            raise ValueError("LinearTPNModel: num_classes must be provided in kwargs")
 
-        self.tasks       = kwargs.get("tasks", None)
         self.split_strategy = kwargs.get("split_strategy", "class")
-        self.task_idx    = kwargs.get("task_idx", 0)
+        self.task_idx = kwargs.get("task_idx", 0)
+        self.freeze_backbone = kwargs.get("freeze_backbone", True)
 
-        # hparams 保存（backbone など学習不要なものは無視）
-        self.save_hyperparameters(ignore=["backbone", "classifier", "past_task_loaders"])
+        # === backbone 出力次元を自動推定して classifier を構築 ===
+        with torch.no_grad():
+            dummy = torch.randn(1, 3, 384)  # WISDM2019: batch=1, channels=3, seq_len=384
+            output_dim = backbone(dummy).shape[1]  # チャンネル方向の次元を取得
+        self.classifier = nn.Linear(output_dim, self.num_classes)
+
+        # === backbone を freeze するかどうか ===
+        for p in self.backbone.parameters():
+            p.requires_grad = not self.freeze_backbone
+
+        # === hparams 保存（kwargs のみ Kaizen 風に保存） ===
+        # → optimizer, lr, scheduler, num_classes, split_strategy, task_idx などが入る
+        self.save_hyperparameters(kwargs)
 
         self.domains = ["real", "quickdraw", "painting", "sketch", "infograph", "clipart"]
         self.past_task_loaders = past_task_loaders
