@@ -44,6 +44,7 @@ from kaizen.utils.pretrain_dataloader import (
     split_dataset_subset,
     direct_prepare_split_dataset_subset,
 )
+from kaizen.utils.har_transforms import Random3DRotation, RandomScaling, TimeWarp
 
 
 # --- 固定タスク分割（wisdm2019用） ---
