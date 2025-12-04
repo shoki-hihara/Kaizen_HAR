@@ -729,9 +729,28 @@ def prepare_transform(dataset: str, multicrop: bool = False, **kwargs) -> Any:
             ImagenetTransform(**kwargs) if not multicrop else MulticropImagenetTransform(**kwargs)
         )
     elif dataset == "wisdm2019":
-        # HAR 用：画像のような切り抜きはせず、センサ用拡張だけを定義
-        base_tf = _build_har_base_transform()
-        return base_tf
+        # HAR(WISDM) 用のデータ拡張
+        scale = RandomScaling(scale_range=(0.9, 1.1))
+        rot   = Random3DRotation(max_angle=np.pi / 6)
+        warp  = TimeWarp(sigma=0.2, knot=4)
+
+        def har_transform(x):
+            """
+            x: [T, C] or [C, T] を想定（WISDM2019 は [384, 3] のはず）
+            """
+            if not torch.is_tensor(x):
+                x = torch.as_tensor(x, dtype=torch.float32)
+
+            # [C, T] (= [3, 384]) で来た場合は [T, C] に揃える
+            if x.dim() == 2 and x.shape[0] == 3 and x.shape[1] != 3:
+                x = x.transpose(0, 1)  # [3, T] -> [T, 3]
+
+            x = scale(x)
+            x = rot(x)
+            x = warp(x)
+            return x
+
+        return har_transform
     elif dataset == "custom":
         return CustomTransform(**kwargs) if not multicrop else MulticropCustomTransform(**kwargs)
     else:
@@ -838,7 +857,7 @@ def prepare_datasets(
         online_eval_dataset = WISDMDataset(
             data_dir=data_dir,
             split="train",
-            transform=online_eval_transform,
+            transform=None,   
         )
         return train_dataset, online_eval_dataset
     
