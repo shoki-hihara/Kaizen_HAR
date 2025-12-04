@@ -144,18 +144,12 @@ def main():
 
         # ③ モデル構築
         linear_kwargs = vars(args).copy()
-        # LinearTPNModel に明示的に渡すものは kwargs から削っておく
-        linear_kwargs.pop("num_classes", None)
-
+        
         model = LinearTPNModel(
             backbone=tpn_backbone,
-            num_classes=args.num_classes,
-            past_task_loaders=past_task_loaders,
-            tasks=tasks,
-            split_strategy=args.split_strategy,
-            task_idx=task_idx,
-            freeze_backbone=True,
-            **linear_kwargs,   # ← ここは linear_kwargs に変更
+            past_task_loaders=past_task_loaders,  # HAR 追加要素
+            tasks=tasks,                          # Kaizen 本家と同じ追加 kwarg
+            **linear_kwargs,                      # num_classes / task_idx / split_strategy 等もここから渡す
         )
 
         # --- コールバック / ロガー設定 ---
