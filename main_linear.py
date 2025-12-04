@@ -139,7 +139,8 @@ def main():
 
         model = LinearTPNModel(
             backbone=tpn_backbone,
-            num_classes=args.num_classes,        # ★18クラス固定
+            num_classes=args.num_classes,  
+            task_idx=args.task_idx,
             past_task_loaders=past_task_loaders, # ★Task0〜Task k の val
             tasks=tasks,                         # ★task_classes の定義
             freeze_backbone=True,
