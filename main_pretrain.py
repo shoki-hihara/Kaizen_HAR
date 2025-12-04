@@ -44,6 +44,42 @@ from kaizen.utils.pretrain_dataloader import (
     split_dataset_subset,
     direct_prepare_split_dataset_subset,
 )
+from kaizen.utils.har_transforms import Random3DRotation, RandomScaling, TimeWarp
+
+def build_har_single_transform():
+    """WISDM 用の 1 本分のデータ拡張（Scaling → Rotation → TimeWarp）"""
+    rot = Random3DRotation(max_angle=np.pi / 6)
+    scale = RandomScaling(scale_range=(0.9, 1.1))
+    warp = TimeWarp(sigma=0.2, knot=4)
+
+    def _transform(x):
+        # x: Tensor [T, C] or [C, T]
+        # 必要に応じて [384,3] / [3,384] を吸収
+        if x.ndim == 3:
+            # すでにバッチ付きなら何もせず（通常は [T,C] 想定なのでここは通らないはず）
+            pass
+        # ここでは [T, C] 前提で処理
+        x = scale(x)
+        x = rot(x)
+        x = warp(x)
+        return x
+
+    return _transform
+
+
+def build_har_two_crops_transform():
+    """
+    Kaizen の MoCo 形式に合わせて、
+    1 サンプルから「2 つの view（crop）」を返す transform を作る。
+    """
+    single_tf = build_har_single_transform()
+
+    def _two_crops(x):
+        # 2 回独立に augment して 2 view を返す
+        return [single_tf(x), single_tf(x)]
+
+    return _two_crops
+
 
 
 # --- 固定タスク分割（wisdm2019用） ---
@@ -91,40 +127,64 @@ def main():
 
     # --- データ準備（大元ロジックを踏襲） ---
     if not args.dali:
-        # 変換の構築
-        if args.unique_augs > 1:
-            transform = [
-                prepare_transform(args.dataset, multicrop=args.multicrop, **kwargs)
-                for kwargs in args.transform_kwargs
-            ]
+
+        # ==========================
+        # ❶ WISDM2019 の場合（HAR）
+        # ==========================
+        if args.dataset.lower() == "wisdm2019":
+            # → TPN 論文に合わせて、時間方向の 3 変換を使った 2-view を生成する
+
+            # Kaizen の Moco 実装は「transform(sample) が List[Tensor] を返す」前提なので、
+            # ここでは 2 view を返す transform を自前で用意して使う
+            assert not args.multicrop, "wisdm2019 では multicrop=False を前提にしてください"
+            assert args.num_crops == 2, "wisdm2019 では num_crops=2 を前提にしてください"
+
+            # ★ 学習用: 2つの augmented view を返す transform
+            task_transform = build_har_two_crops_transform()
+
+            # ★ online eval 用: 通常は拡張なし / もしくは軽い正規化のみ
+            def online_eval_transform(x):
+                # ここでは一旦「そのまま」渡す（必要であれば正規化をあとから追加）
+                return x
+
+        # ==========================
+        # ❷ それ以外（元の CIFAR/STL/Imagenet 用）
+        # ==========================
         else:
-            transform = prepare_transform(
-                args.dataset, multicrop=args.multicrop, **args.transform_kwargs
-            )
-
-        if args.debug_augmentations:
-            print("Transforms:")
-            pprint(transform)
-
-        # マルチクロップかどうか
-        if args.multicrop:
-            assert not args.unique_augs == 1
-            if args.dataset in ["cifar10", "cifar100", "wisdm2019"]:
-                size_crops = [32, 24]
-            elif args.dataset == "stl10":
-                size_crops = [96, 58]
+            # 変換の構築（元コードそのまま）
+            if args.unique_augs > 1:
+                transform = [
+                    prepare_transform(args.dataset, multicrop=args.multicrop, **kwargs)
+                    for kwargs in args.transform_kwargs
+                ]
             else:
-                size_crops = [224, 96]
-            transform = prepare_multicrop_transform(
-                transform,
-                size_crops=size_crops,
-                num_crops=[args.num_crops, args.num_small_crops],
-            )
-        else:
-            if args.num_crops != 2:
-                assert args.method == "wmse"
-            online_eval_transform = transform[-1] if isinstance(transform, list) else transform
-            task_transform = prepare_n_crop_transform(transform, num_crops=args.num_crops)
+                transform = prepare_transform(
+                    args.dataset, multicrop=args.multicrop, **args.transform_kwargs
+                )
+
+            if args.debug_augmentations:
+                print("Transforms:")
+                pprint(transform)
+
+            # マルチクロップかどうか
+            if args.multicrop:
+                assert not args.unique_augs == 1
+                if args.dataset in ["cifar10", "cifar100", "wisdm2019"]:
+                    size_crops = [32, 24]
+                elif args.dataset == "stl10":
+                    size_crops = [96, 58]
+                else:
+                    size_crops = [224, 96]
+                transform = prepare_multicrop_transform(
+                    transform,
+                    size_crops=size_crops,
+                    num_crops=[args.num_crops, args.num_small_crops],
+                )
+            else:
+                if args.num_crops != 2:
+                    assert args.method == "wmse"
+                online_eval_transform = transform[-1] if isinstance(transform, list) else transform
+                task_transform = prepare_n_crop_transform(transform, num_crops=args.num_crops)
 
         # データセット
         train_dataset, online_eval_dataset = prepare_datasets(
