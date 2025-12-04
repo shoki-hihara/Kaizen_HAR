@@ -143,6 +143,10 @@ def main():
         current_val_loader = test_loaders[f"task{task_idx}"]
 
         # ③ モデル構築
+        linear_kwargs = vars(args).copy()
+        # LinearTPNModel に明示的に渡すものは kwargs から削っておく
+        linear_kwargs.pop("num_classes", None)
+
         model = LinearTPNModel(
             backbone=tpn_backbone,
             num_classes=args.num_classes,
@@ -151,7 +155,7 @@ def main():
             split_strategy=args.split_strategy,
             task_idx=task_idx,
             freeze_backbone=True,
-            **vars(args),   # 既存の hparams をそのまま渡す
+            **linear_kwargs,   # ← ここは linear_kwargs に変更
         )
 
         # --- コールバック / ロガー設定 ---
