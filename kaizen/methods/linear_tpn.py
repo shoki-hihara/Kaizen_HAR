@@ -71,6 +71,8 @@ class LinearTPNModel(pl.LightningModule):
         ], default="reduce")
         parser.add_argument("--lr_decay_steps", default=None, type=float, nargs="+")
 
+        parser.add_argument("--lr", type=float, default=0.1, help="learning rate for linear classifier")
+
         return parent_parser
 
     def forward(self, X: torch.Tensor) -> Dict[str, Any]:
